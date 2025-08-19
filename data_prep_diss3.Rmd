@@ -1,0 +1,990 @@
+---
+title: "Dissertation Data Cleaning"
+author: "Sarah Neubauer"
+date: '2022-06-23'
+output: pdf_document
+---
+
+This document cleans and aggregates multiple data sources for the final dataset
+
+# 0. Packages
+
+```{r, message = FALSE, warning = FALSE}
+
+library(tidyverse) 
+library(dplyr)
+library(dtplyr)
+
+# GIS packages
+library(sf) # for tidy spatial data
+library(rgdal) # for spatial operations
+library(tigris) # for accessing census boundaries
+library(tidycensus) # for downloading census data
+library(censusapi) # for downloading census data
+library(tidygraph)
+library(ggraph)
+#remotes::install_github("luukvdmeer/sfnetworks")
+library(sfnetworks)
+library(gstat)
+
+# Networks Packages
+library(tidygraph)
+library(ggraph)
+
+#remotes::install_github("luukvdmeer/sfnetworks")
+library(sfnetworks)
+library(gstat)
+
+# Multilevel Modeling
+library(lme4)
+library(lmerTest)
+
+# Matching
+library(MatchIt)
+library(cem)
+
+#set working directory
+setwd("C:/Users/sarah/Desktop/Dissertation/Data/Diss_Code_Final")
+
+```
+
+## (1) SCI 
+Read in the SCI dataset and aggregate to the sub-country division level
+
+To understand broader networks of the CSDs, upload SCI data again but will keep all fr_locs (not just California)
+
+NOTE: Have code to upload all US Zip Code SCI data, but various filtering etc. will depend on movement data.
+Other uploads have been commented out (take up a lot of space)
+Created a sample SCI which focuses on:
+- California for user_loc
+- California,
+- California: 9001 to 96162
+
+
+```{r}
+
+#file zipcode 9
+sci_zip9 <- read.table(file = "C:/Users/sarah/Desktop/Dissertation/Data/zcta_zcta_shard9.tsv", sep = '\t', header = TRUE)
+
+sci_cali_us <- sci_zip9 %>%
+  filter(user_loc %in% (90001:96162)) 
+
+#weight the sci to be at the county sub-division level 
+#read in crosswalk data between zip and sub-division, merge with SCI
+crosswalk <- read.csv("ZIP_COUNTY_SUB.csv")
+
+crosswalk2 <- crosswalk %>%
+  filter(ZIP %in% (90001:96162)) %>%
+   filter(TOT_RATIO >= 0.5) 
+
+#should have 379 CSDs
+csd_test <- unique(crosswalk2$COUNTY_SUB)
+csd_test2 <- unique(crosswalk2$ZIP)
+
+#see what zip codes are missing between crosswalk and SCI
+unique_sci <- sci_cali_us %>%
+  select(user_loc) %>%
+  distinct(user_loc) %>%
+  mutate(ID=row_number())
+
+unique_cw <- crosswalk2 %>%
+  select(ZIP) %>%
+  distinct(ZIP) %>%
+  rename(user_loc = ZIP) %>%
+  mutate(ID=row_number())
+
+unique_zip <- rbind(unique_sci,unique_cw)
+
+#merge full unique_zip with SCI data
+sci_cali_zip <- sci_cali_us %>%
+  right_join(unique_zip, by = "user_loc") %>%
+  right_join(unique_zip, by = c(fr_loc = "user_loc")) %>%
+  select(-ID.x,-ID.y)
+
+#replaces nans with 0
+sci_cali_zip[is.na(sci_cali_zip)] <- 0
+
+csd_test1 <- unique(sci_cali_zip$fr_loc)
+csd_test2 <- unique(sci_cali_zip$user_loc)
+#both of these should have a list of 2449
+
+#merge cw2 and sci for my experiment
+sci_cali2 <- sci_cali_zip %>%
+  full_join(crosswalk2, by = c(user_loc = "ZIP")) %>%
+  rename(csd_user = COUNTY_SUB) %>%
+  full_join(crosswalk2, by = c(fr_loc = "ZIP")) %>%
+  rename(csd_fr = COUNTY_SUB) %>%
+  select(user_loc, fr_loc, scaled_sci, csd_user,csd_fr)
+
+csd_test <- unique(sci_cali2$csd_user)
+
+#download county subdivision population data from US Census API
+census_api_key = "2b95333203c9f100dd6c15ba68b2d80613f01f7d"
+
+#get population data for zip codes 
+us_pop_zip <-  get_acs(geography = "zcta",
+                       table = "B01003",
+                           year = 2020,
+                           key = census_api_key)
+
+us_pop_zip$GEOID <- as.numeric(us_pop_zip$GEOID)
+
+#filter by CA 
+us_pop_zip <- us_pop_zip %>% 
+  filter(GEOID %in% (90001:96162)) %>%
+  select(GEOID, variable, estimate) %>%
+  spread(variable, estimate) %>%
+  rename(pop_zip = B01003_001)
+
+#get code for county sub-division
+us_pop_csd <-  get_decennial(geography = "county subdivision", 
+                           state = "CA",
+                           table = "P1",
+                           year = 2020,
+                           key = census_api_key)
+  
+  
+#US pop filter and merge with SCI data
+us_pop_csd <- us_pop_csd %>%
+  filter(variable == "P1_001N") %>%
+  spread(variable,value) %>%
+  rename(pop_csd = P1_001N) 
+  
+us_pop_csd$GEOID <- as.numeric(us_pop_csd$GEOID)
+
+#merge crosswalk to CSD
+us_pop_csd <- us_pop_csd %>%
+  left_join(crosswalk, by = c(GEOID = "COUNTY_SUB")) 
+
+#merge two populations together
+us_pop <- us_pop_csd %>%
+  left_join(us_pop_zip, by = c(ZIP = "GEOID")) %>%
+  rename(CSD = GEOID) 
+
+#replace NAs
+us_pop$pop_zip[is.na(us_pop$pop_zip)] <- 0
+
+#calculate population weights
+us_pop <- us_pop %>%
+  group_by(CSD) %>%
+  mutate(tot_pop_CSD = sum(pop_zip)) %>%
+  ungroup() %>%
+  mutate(pop_share = (pop_zip/tot_pop_CSD)) %>%
+  select(-NAME)
+
+#remove big files 
+rm(sci_zip9)
+
+#merge population weights with SCI data 
+sci_cali3 <- sci_cali2 %>% 
+  left_join(us_pop, by  = c(user_loc = "ZIP")) 
+
+sci_cali3 <- sci_cali3 %>%
+  select(user_loc, fr_loc,scaled_sci,csd_user, csd_fr,pop_share) %>%
+  rename(pop_share_user = pop_share) %>%
+  left_join(us_pop, by  = c(fr_loc = "ZIP")) %>%
+  rename(pop_share_fr = pop_share) %>%
+  select(user_loc, fr_loc, scaled_sci, csd_user, csd_fr, pop_share_user, pop_share_fr)
+
+
+#create agg sci
+sci_cali_csd <- sci_cali3 %>%
+  group_by(user_loc) %>%
+  mutate(sum_share_user = sum(pop_share_user)) %>%
+  ungroup() %>%
+  group_by(fr_loc) %>%
+  mutate(sum_share_fr = sum(pop_share_fr)) %>%
+  ungroup() %>%
+  group_by(csd_user, csd_fr) %>%
+  mutate(sci_csd1 = (sum_share_fr*sum_share_user*scaled_sci)) %>%
+  mutate(sci_csd = sum(sci_csd1)) %>%
+  select(csd_user,csd_fr,sci_csd)
+
+
+#unique values of SCI only and log
+sci_cali_csd <- sci_cali_csd %>%
+  distinct() %>%
+  mutate(log_sci_csd = log(sci_csd))
+
+csd_test3 <- unique(sci_cali_csd$csd_user)
+
+#Drop NAs
+sci_cali_csd <- na.omit(sci_cali_csd) 
+
+```
+
+
+## (2) Social Capital Index (used in Fraser 2022)
+
+Indices are downloaded from this paper
+
+Indices are used in this paper entitled _Social capital's impact on COVID-19 outcomes at local levels._ 
+
+- Want to download the indices? Download them from our repository on the [**Harvard Dataverse!**](https://doi.org/10.7910/DVN/OSVCRC).
+
+```{r}
+
+#read in the raw indices data from Fraser 2021 paper 
+soc_cap <- read.csv("index_csub_V3_04_10_2022.csv")
+
+#filter for california and 2020 only
+soc_cap <- soc_cap %>%
+  filter(state == "CA") %>%
+  filter (year == 2020)
+
+```
+                    
+                    
+     
+## (3) Social Vulnerbality 
+
+Downloaded the CDC's Social Vulnerability Index at the census tract level for the year 2018 from the following location on Jun 26th 2022
+
+https://www.atsdr.cdc.gov/placeandhealth/svi/data_documentation_download.html
+
+```{r}
+
+#read in California SVI data
+svi <- read.csv("California.csv") %>%
+  select(FIPS, STATE, RPL_THEMES, RPL_THEME1, RPL_THEME2, RPL_THEME3, RPL_THEME4) %>%
+  rename(svi = RPL_THEMES,
+         svi_socioeconomic = RPL_THEME1, 
+         svi_household_disability = RPL_THEME2,
+         svi_minority = RPL_THEME3, 
+         svi_housing_transport = RPL_THEME4) %>%
+mutate_at(vars(svi:svi_housing_transport),
+            funs(if_else(. == -999, NA_real_, .))) 
+
+#put into CSUBs 
+#convert from tracts
+tracts <- tigris::tracts(state = "CA", year = 2010, cb = TRUE) %>%
+    st_as_sf() %>%
+    select(tracts = GEO_ID, geometry) %>%
+    mutate(tracts = tracts %>% str_sub(-11, -1)) %>%
+    mutate(tracts = as.numeric(tracts)) %>%
+    left_join(by = c("tracts" = "FIPS"),
+              y = svi)
+  
+  # For each state, import csubs from TIGRIS
+csub <- tigris::county_subdivisions(state = "CA", year = 2010) %>%
+    st_as_sf() %>%
+    select(csub = GEOID10, geometry)
+  
+  # Join together the census tract measures into the csubs
+ svi_csub<- csub %>%
+    st_join(tracts) %>%
+    as.data.frame() %>%
+    group_by(csub) %>%
+    summarize(svi = mean(svi, na.rm = TRUE),
+              svi_socioeconomic = mean(svi_socioeconomic, na.rm = TRUE),
+              svi_household_disability = mean(svi_household_disability, na.rm = TRUE),
+              svi_minority = mean(svi_minority, na.rm = TRUE),
+              svi_housing_transport = mean(svi_housing_transport, na.rm = TRUE)) %>%
+     mutate(csub = as.numeric(csub)) %>%
+    ungroup() %>%
+    return()
+
+#Save as a CSV file
+write_csv(svi_csub, "svi_csub.csv")
+
+```
+               
+## (4) US Census Municiple Employees and Population 
+```{r}
+
+# Download number of municipal employees and population
+workers <- get_acs(geography = "county subdivision", 
+                   state= "CA",
+               survey = "acs5", 
+               year = 2018, 
+               variables = list(employee_muni = "B08128_006",
+                                pop = "B01001_001"),
+               key= census_api_key)
+
+workers <- workers %>%
+  select(csub = GEOID, variable,estimate) %>%
+  pivot_wider(id_cols = csub, names_from = variable, values_from = estimate) %>%
+  # Calculate number of municipal employees per 1000 residents
+  mutate(employee_muni = employee_muni / pop * 1000) %>%
+  mutate(csub = as.numeric(csub))
+
+
+```
+
+#(5)  Disaster Intensity
+
+Measured by how intense the California Fire is (same as Fraser 2022)
+```{r}
+
+# Import counties
+mycounties <- st_read("cb_2018_us_county_500k.shp") %>% 
+  filter(str_sub(GEOID, 1,2) %in% "06") %>%
+  as.data.frame() %>%
+  select(GEOID, NAME, ALAND) %>%
+  # Convert area from square meters to acres
+  mutate(area_land_acres = ALAND* 0.000247105)
+
+#make grid function
+make_grid = function(mydata){
+  data.frame(
+    county = mydata$county,
+    acres_burned = mydata$acres_burned,
+    date = seq(from = mydata$start, to = mydata$end, by = "day")) %>%
+    return()
+}
+
+# Download California fires dataset
+
+fires <- read_csv("https://docs.google.com/spreadsheets/d/1UgRFtuwW2xguQbQn_tj9xpFbgY7v6HyW8SZSP1z0SDw/export?format=csv") 
+
+# Estimate burn area per day
+fire2 <- fires %>%
+  # Get a unique id for each fire
+  mutate(id = 1:n()) %>%
+  # Split county column into one cell per county
+  separate(col = county, into = paste("county", 1:9, sep = "_"), sep = ",") %>%
+  # then flip into a long, tidy data.frame
+  pivot_longer(cols = contains("county"), names_to = "group", values_to = "county") %>%
+  # eliminating empty rows
+  filter(!is.na(county)) %>%
+  mutate(county = str_trim(county, side = "both")) %>%
+  # and converting the date to date format
+  mutate_at(vars(start,end),funs(lubridate::mdy(.))) %>%
+  # calculate length of interval in days
+  mutate(length = lubridate::interval(start, end) / lubridate::duration(num = 1, units = "days")) %>%
+  # calculate number of counties affected per fire,
+  # and normalized the burn area by the number of counties it totals
+  # and divide it by the number of days that fire ran
+  group_by(id, name) %>%
+  mutate(n_counties = n(),
+         acres_burned = acres_burned / n_counties / length) %>%
+  ungroup() %>%
+  distinct()
+
+
+burn_rate <- fire2 %>%
+  left_join(mycounties, by = c("county" = "NAME")) %>%
+  group_by(GEOID) %>%
+  mutate(daily_burn = acres_burned/length) %>%
+  # And then calculating the percentage burned out of all land in the county
+  mutate(burn_rate = acres_burned / area_land_acres * 100) %>%
+  # if the burn rate is non-zero, mark as an active fire
+  mutate(active_fire = if_else(burn_rate > 0, 1, 0)) %>%
+  mutate(GEOID = as.numeric(GEOID)) %>%
+  select(name, GEOID, start, end, daily_burn, burn_rate)
+
+burn_rate$daily_burn[which(burn_rate$daily_burn == Inf )] <- 63
+burn_rate$burn_rate[which(burn_rate$burn_rate == Inf )] <- 63
+
+
+
+```
+
+
+
+#(7)  Facebook Mobility Data 
+
+#network files from Fraser 2022
+
+# 2. Glass Fire in Napa and Sonoma Counties
+
+Next, we'll tally movement for a major fire in 2020 in California.
+
+First, let's use the excellent tigris package to get polygons for every level of geography we're looking at for the Glass Fire
+
+```{r}
+
+# Let's import census tracts for several states
+get_tracts = function(STATE){
+  tigris::tracts(state = STATE, cb = TRUE, year = 2019) %>%
+    st_as_sf() %>%
+    st_transform(CRS(paste0("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))) %>%
+    # set all variable names to lowercase
+    magrittr::set_colnames(value = names(.) %>% tolower()) %>%
+    select(geoid, area_land = aland, geometry) %>%
+    filter(!is.na(geoid)) %>%
+    return()
+}
+# Import effected census tracts of the glass fire (developed by Fraser 2022)
+ca_tracts <- read_rds("shapes/ca_tracts.rds")
+
+#import all country subdivisions 
+csub_us <- read_rds("csub.rds")
+
+#import all zipcodes
+zcta_us <- read_rds("shapes/zipcodes.rds")
+
+#import all counties in the US
+counties_us <- read_rds("counties.rds")
+  
+#import US states
+states <- read_rds("shapes/states.rds")
+
+
+#get the centroids
+# Get Albers Equal Area Conic Projection
+#https://spatialreference.org/ref/esri/north-america-albers-equal-area-conic/
+aea <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=m +no_defs"
+
+#read in the county centroids
+county_centroids <- read_rds("shapes/counties_centroid.rds")
+
+#read in the csub centroids
+csub_centroid <- read_rds("shapes/csub_centroid.rds")
+
+#read in the zipcode centroids
+zcta_centroid <- read_rds("shapes/ca_zipcodes_centroid.rds")
+
+#read in census tracts
+tracts_centroid <- read_rds("shapes/ca_tracts_centroid.rds")
+
+##Geolocate Neighborhoods and Edgelist
+#read in glass fire edges neighbourhood
+glass_fire_edges <- read_rds("fb_data/glass_fire_edges_neighborhood.rds")
+
+#get fire nodes
+fire_nodes <- read_rds("fb_data/glass_fire_nodes_neighborhood.rds")
+
+### Aggregate to Census Tract
+# Obtain state polygon for California
+states <-states %>%
+  filter(state == "CA")
+
+#read in IDs for glass fire
+ids <- read_rds("fb_data/glass_fire_ids_neighborhood.rds")
+
+# Now, let's extract just the edges within Southeastern Louisiana
+edgelist <- read_rds("fb_data/glass_fire_edges_neighborhood.rds") %>% 
+  as_tibble() %>%
+  # Grab key fields
+  select(start_polygon_id, end_polygon_id, 
+         n_crisis, n_baseline, date_time) %>%
+    # Filter into just California Neighborhoods
+  filter(start_polygon_id %in% ids & end_polygon_id %in% ids) 
+
+
+# Import neighborhoods
+neighborhoods <- read_rds("fb_data/glass_fire_nodes_neighborhood.rds") %>%
+  as_tibble() %>%
+  # Filter into just California Neighborhoods
+  filter(polygon_id %in% ids) %>%
+  select(polygon_id, csub)  %>%
+  distinct()
+
+# Get centroids as points, which we can easily join together
+centroids <- read_rds("shapes/csub_centroid.rds") %>%
+  filter(str_sub(geoid, 1,2 ) == "06") %>%
+  mutate(x = st_coordinates(geometry)[,1],
+         y = st_coordinates(geometry)[,2]) %>%
+  as.data.frame() %>% 
+  select(-geometry) %>%
+  distinct()
+
+# Aggregate edgelist from neighborhood to census tract level
+edgelist %>%
+  # First, let's join into the edgelist the census tract of the origin neighborhood
+  left_join(by = c("start_polygon_id" = "polygon_id"),
+            y = neighborhoods %>%
+              rename(from = csub)) %>%
+  # Now let's join into the edgelist the census tract of the destination neighborhood
+  left_join(by = c("end_polygon_id" = "polygon_id"),
+            y = neighborhoods %>%
+              rename(to = csub)) %>%
+  # Aggregate from neighborhood to census tract
+  # Adding together all people who moved between neighborhoods for this tract
+  group_by(from, to, date_time) %>%
+  summarize(n_crisis = sum(n_crisis, na.rm = TRUE),
+            n_baseline = sum(n_baseline, na.rm = TRUE)) %>%
+    ungroup() %>%
+  filter(!is.na(from), !is.na(to), !is.na(date_time), 
+         !is.na(n_crisis), !is.na(n_baseline)) %>%
+  # Next, let's join in the origin subdivision centroid points
+  left_join(by = c("from" = "geoid"),
+            y = centroids %>%
+              rename(from_x = x,
+                     from_y = y)) %>%
+  # Next, let's join in the destination subdivision centroid points
+  left_join(by = c("to" = "geoid"),
+            y = centroids %>%
+              rename(to_x = x,
+                     to_y = y)) %>%
+  # Filter out any geocodes that didn't make it
+  filter(!is.na(from_x) & !is.na(from_y) & !is.na(to_x) & !is.na(to_y))  %>% 
+  # Create line-springs in C really really fast
+  mutate(geometry = sprintf("LINESTRING(%s %s, %s %s)", 
+                            from_x, from_y, 
+                            to_x, to_y)) %>%
+  # Set the crs and tell the object to become sf format using the geometry column
+  # For the coordinate reference system, let's use:
+  # the World Geodetic System from 1984, commonly used with degrees
+  # WGS 84 https://spatialreference.org/ref/epsg/wgs-84/
+  st_as_sf(crs = CRS(paste0("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs")),
+           wkt = "geometry") %>%
+  # Finally, let's tally evacuation
+  # If crisis movement was greater than baseline movement, record it as evacuation;
+  # If crisis movement was lower than baseline movement, leave it 0;
+  # We don't really want to capture negative evacuation.
+  mutate(evacuation = n_crisis - n_baseline) %>%
+  select(from, to, date_time, evacuation, geometry) %>%
+  saveRDS("raw_data/glass_fire_edges_csub.rds")
+
+
+# Let's identify all the counties in our California Sample
+read_rds("fb_data/glass_fire_nodes_neighborhood.rds")$csub %>%
+  str_sub(1,5) %>% unique() %>%
+  saveRDS("raw_data/glass_fire_counties.rds")
+```
+
+Note that this comes from the fb_network R markdown- that should be run first 
+
+Using similar measures as Fraser 2022 et al., develop 6 measures of evacuation from Facebook data
+(1) intra_more = increased movement between neighbourhoods within the same sub-division
+(2) intra_less = decreased movement between neighbourhoods within the same sub-division
+(3) inter_more = increased movement between neighbourhoods between DIFFERENT sub-divisions 
+(4) inter_less = decreased movement between neighbourhoods between DIFFERENT sub-divisions
+
+
+
+```{r}
+
+#get csub data
+csub_fire <- read_rds("glass_fire_edges_csub.rds")
+
+#glass fire 
+glass_fire <- read_rds("glass_fire_ca.rds")
+
+### California
+
+#(1) Local Evacuation: intra_more
+intra_more <- csub_fire %>%
+  # Zoom into movement between neighborhoods within the same subdivision
+  filter(from == to) %>%
+  filter(evacuation > 0) %>%
+  mutate(from_csub = as.numeric(from),
+        to_csub = as.numeric(to)) %>%
+  as.data.frame() %>%
+  # Calculate total evacuation within a subdivision
+  group_by(to_csub,from_csub, date_time) %>%
+  summarize(evacuation = sum(evacuation, na.rm = TRUE)) %>%
+  ungroup() %>%
+  #add weekly evacuation
+  #mutate(week = lubridate::ceiling_date(date_time, unit = c('week'))) %>%
+  #add daily evacuation 
+  mutate(day = lubridate::ceiling_date(date_time, unit = c('day'))) %>%
+  group_by(from_csub,to_csub,day) %>%
+  summarise(evacuation = sum(evacuation, na.rm=TRUE))
+  
+
+#(2) Long-distance evacuation: inter_more
+inter_more <- csub_fire %>%
+  #activate("edges") %>%
+  # Zoom into movement between different census csub
+  filter(from != to) %>%
+  # Evaluate INCREASE in movement
+  filter(evacuation > 0) %>%
+    mutate(from_csub = as.numeric(from),
+        to_csub = as.numeric(to)) %>%
+  as.data.frame() %>% 
+   group_by(to_csub, from_csub, date_time) %>%
+  summarize(evacuation = sum(evacuation, na.rm = TRUE)) %>%
+  ungroup() %>%
+  #add daily evacuation
+  mutate(day = lubridate::ceiling_date(date_time, unit = c('day'))) %>%
+  group_by(from_csub,to_csub,day) %>%
+  summarise(evacuation = sum(evacuation, na.rm=TRUE))
+
+
+# Reduced local evacuation: intra_less
+#Calculate decrease in movement within subdivision
+intra_less <- csub_fire %>%
+  # Zoom into movement between neighborhoods within the same subdivision
+  filter(from == to) %>%
+  # Evaluate DECREASE in movement
+  filter(evacuation < 0) %>%
+  mutate(from_csub = as.numeric(from),
+        to_csub = as.numeric(to)) %>%
+  as.data.frame() %>%
+  # Calculate total evacuation within a census csub
+  group_by(to_csub,from_csub, date_time) %>%
+  summarize(evacuation = sum(abs(evacuation), na.rm = TRUE)) %>%
+  ungroup() %>%
+  #add daily evacuation
+  mutate(day = lubridate::ceiling_date(date_time, unit = c('day'))) %>%
+  group_by(from_csub,to_csub,day) %>%
+  summarise(evacuation = sum(evacuation, na.rm=TRUE))
+
+#Reduced long-distance: inter_less 
+# Calculate increase in movement between census csub
+inter_less <- csub_fire %>%
+  #activate("edges") %>%
+  # Zoom into edges between different census csub
+  filter(from != to) %>%
+  # Evaluate DECREASE in movement
+  filter(evacuation < 0) %>%
+    mutate(from_csub = as.numeric(from),
+        to_csub = as.numeric(to)) %>%
+  as.data.frame() %>%
+   group_by(to_csub, from_csub, date_time) %>%
+  summarize(evacuation = sum(abs(evacuation), na.rm = TRUE)) %>%
+  ungroup() %>%
+  #add daily evacuation
+  mutate(day = lubridate::ceiling_date(date_time, unit = c('day'))) %>%
+  group_by(from_csub,to_csub,day) %>%
+  summarise(evacuation = sum(evacuation, na.rm=TRUE))
+  
+
+#overall evacuation (sum _more types)
+evac_more <- inter_more %>%
+  left_join(intra_more, by=c("from_csub" = "from_csub", "day" = "day")) %>%
+  mutate(evacuation = evacuation.x + evacuation.y) %>%
+  select(to_csub.x, from_csub, day, evacuation) %>%
+  rename(to_csub = to_csub.x) 
+
+#shelter-in-place (sum _less types)
+shelter_place <- inter_less %>%
+  left_join(intra_less, by=c("from_csub" = "from_csub", "day" = "day")) %>%
+  mutate(evacuation = evacuation.x + evacuation.y) %>%
+  select(to_csub.x, from_csub, day, evacuation) %>%
+  rename(to_csub = to_csub.x) 
+
+# Bind these lists together into a single data.frame
+evac_csub <- bind_rows(
+  intra_more, intra_less,
+  inter_more, inter_less,
+  shelter_place, evac_more,
+  .id = "type") %>%
+  mutate(type = recode_factor(
+    type,
+    "1" = "evacuation_intra_more", "2" = "evacuation_intra_less", 
+    "3" = "evacuation_inter_more", "4" = "evacuation_inter_less",
+    "5" = "shelter_in_place", "6" = "overall_evacuaton")) %>%
+  replace(is.na(.), 0)
+
+#save evacuation data as a csv
+write_csv(evac_csub,"evac_csub.csv")
+
+
+```
+  
+
+#(8) Final Regression Dataset
+
+### California
+
+```{r, message = FALSE, warning = FALSE}
+
+#start with SCI data
+reg_dat <- sci_cali_csd %>%
+  #join capital index
+  left_join(soc_cap, by = c("csd_user"="geoid")) %>%
+  rename(social_capital_user = social_capital,
+         bonding_user = bonding,
+         bridging_user = bridging,
+         linking_user = linking) %>%
+  select(-year,-state) %>%
+  left_join(soc_cap, by = c("csd_fr"="geoid")) %>%
+  rename(social_capital_fr = social_capital,
+         bonding_fr = bonding,
+         bridging_fr = bridging,
+         linking_fr = linking) %>%
+  #join SVI 
+    left_join(svi_csub, by = c("csd_user"="csub")) %>%
+  rename(svi_user = svi,
+         svi_socioeconomic_user = svi_socioeconomic,
+         svi_household_disability_user = svi_household_disability,
+         svi_minority_user= svi_minority,
+         svi_housing_transport_user = svi_housing_transport) %>%
+  left_join(svi_csub, by = c("csd_fr"="csub")) %>%
+  rename(svi_fr = svi,
+         svi_socioeconomic_fr = svi_socioeconomic,
+         svi_household_disability_fr = svi_household_disability,
+         svi_minority_fr= svi_minority,
+         svi_housing_transport_fr = svi_housing_transport) %>%
+  #join workers
+     left_join(workers, by = c("csd_user" = "csub")) %>%
+  rename(employee_muni_user = employee_muni,
+         pop_user = pop) %>% 
+  left_join(workers, by = c("csd_fr" = "csub")) %>%
+  rename(employee_muni_fr = employee_muni,
+         pop_fr = pop) %>%
+#join google mobility
+mutate(county_user = str_sub(csd_user, 1,4)) %>%
+  mutate(county_user = as.numeric(county_user)) %>%
+  mutate(county_fr = str_sub(csd_fr, 1,4)) %>%
+  mutate(county_fr = as.numeric(county_fr)) %>%
+  left_join(gm_avg, by = c("county_user" = "fips")) %>%
+  rename(grocery_pharm_user = grocery_pharmacy,
+         parks_user = parks,
+         residential_user = residential,
+         retail_recreation_user= retail_recreation,
+         transit_user = transit,
+         workplaces_user = workplaces) %>%
+    left_join(gm_avg, by = c("county_fr" = "fips")) %>%
+  rename(grocery_pharm_fr = grocery_pharmacy,
+         parks_fr = parks,
+         residential_fr = residential,
+         retail_recreation_fr= retail_recreation,
+         transit_fr = transit,
+         workplaces_fr = workplaces) %>%
+  #join burn rate
+  left_join(burn_rate, by = c("county_user" = "GEOID")) %>%
+              rename(daily_burn_user = daily_burn,
+                     name_user = name, 
+                     start_user = start,
+                     end_user = end,
+                     burn_rate_user = burn_rate) %>%
+    left_join(burn_rate, by = c("county_fr" = "GEOID")) %>%
+              rename(daily_burn_fr = daily_burn,
+                     name_fr = name, 
+                     start_fr = start,
+                     end_fr = end,
+                     burn_rate_fr = burn_rate) %>%
+  #add facebook mobility data
+    left_join(evac_csub, by = c ("csd_user" = "from_csub", "csd_fr" = "to_csub")) %>%
+  drop_na(type) %>% 
+  # Adjust variables
+  # Control for population among evacuation tallies 
+ mutate(evacuation_per_thous = evacuation/pop_user * 1000) 
+    
+write_csv(reg_dat, "reg_dat.csv")
+
+```
+
+
+#additional variables added (can just read in CSV instead of re-running above code)
+
+```{r}
+#read in regression dataset
+reg_dat <- read_csv("reg_dat.csv")
+
+```
+
+
+#california agriculture data: number of farms and irrigation
+Data source: https://www.nass.usda.gov/Publications/AgCensus/2017/Full_Report/Volume_1,_Chapter_2_County_Level/California/
+
+```{r}
+#read in agriculture farm data on california 
+farms <- read.table(file = "2017_cdqt_data.txt.gz", sep = '\t', header = TRUE)
+
+#create county GEOID
+farms$geoid <- paste(farms$STATE_FIPS_CODE,farms$COUNTY_CODE, sep = "")
+
+farms$DOMAINCAT_DESC <- sub("^$", "N", farms$DOMAINCAT_DESC)
+
+farms$geoid <- as.numeric(farms$geoid)
+
+farms <- farms %>%
+  filter(DOMAINCAT_DESC =="N") %>%
+  filter(STATE_ALPHA == "CA") %>%
+  filter(COUNTY_CODE != "NULL") %>%
+  filter(SHORT_DESC %in% c("FARM OPERATIONS - NUMBER OF OPERATIONS", "AG LAND, IRRIGATED - NUMBER OF OPERATIONS")) %>%
+  select(SHORT_DESC,geoid,COUNTY_NAME, VALUE)
+
+farms$VALUE <- as.numeric(gsub(",","",farms$VALUE))
+
+farms <- distinct(farms)
+farms <- farms %>%
+    spread(SHORT_DESC, VALUE) %>%
+  rename(num_irr = "AG LAND, IRRIGATED - NUMBER OF OPERATIONS",
+         num_farm = "FARM OPERATIONS - NUMBER OF OPERATIONS")
+           
+#join with reg_dat
+reg_dat <- reg_dat %>%
+  left_join(farms, by = c("county_user" = "geoid")) %>%
+              rename(county_name_user = COUNTY_NAME,
+                     num_farm_user = num_farm,
+                     num_irr_user = num_irr) %>%
+    left_join(farms, by = c("county_fr" = "geoid")) %>%
+              rename(county_name_fr = COUNTY_NAME,
+                     num_farm_r = num_farm,
+                     num_irr_fr = num_irr)
+
+#save reg dat with new farm data
+write_csv(reg_dat, "reg_dat.csv")
+
+
+```
+
+
+#Distances between CSUBS
+
+```{r}
+
+
+#read in csub shape files
+csub <- read_rds("csub.rds") %>%
+#filter for california only
+  filter(str_sub(geoid, 1,2) %in% "06") %>%
+  st_transform(crs = aea) %>%
+  select(geoid, geometry)
+
+csub_shp <- as_Spatial(csub)
+
+
+#read in the csub centroids
+csub_centroid <- read_rds("shapes/csub_centroid.rds") %>%
+  filter(str_sub(geoid, 1,2 ) == "06")
+#seperate the centroid coordinates
+csub_centroid <- csub_centroid %>%
+    mutate(centroid_x = unlist(map(geometry,1)),
+           centroid_y = unlist(map(geometry,2)))
+
+
+csub_centroid <- tibble(csub_centroid) %>%
+  select(geoid, centroid_x, centroid_y)
+
+# Transform the centroids into a geometry set
+ca_centroids <- 
+  csub_centroid[,2:3] %>% 
+  as.data.frame %>% 
+  st_as_sf(coords = c(1,2)) %>% 
+  st_geometry()
+
+# Add the CRS type
+st_crs(ca_centroids) <- csub_shp@proj4string
+
+# Now calculate all the distances (takes a few moments to run)
+ca_distances <- st_distance(ca_centroids, ca_centroids)
+
+# Convert the matrix to table and meters to KM
+ca_dist_table <- ca_distances %>% 
+  as_tibble() %>%
+  rename_all(function(x) csub_shp$geoid) %>% # rename the rows 
+  mutate(from_csd = csub_shp$geoid) %>%
+  gather(key=to_csd, value=dist, -from_csd) %>% 
+  mutate(dist = as.numeric(dist)) %>% 
+  mutate(dist = dist/1000) %>% # convert to KM
+  arrange(to_csd, from_csd)
+
+ca_dist_table$to_csd <- as.numeric(ca_dist_table$to_csd)
+ca_dist_table$from_csd <- as.numeric(ca_dist_table$from_csd)
+
+#join with reg_dat
+reg_dat <- reg_dat %>%
+  left_join(ca_dist_table, by = c("csd_user" = "from_csd", 
+                                  "csd_fr" = "to_csd")) 
+
+#save reg dat with new farm data
+write_csv(reg_dat, "reg_dat.csv")
+
+```
+
+#Road/Infrastructure Condition Proxy 
+Data source: https://data.bts.gov/Research-and-Statistics/County-Transportation-Profiles/qdmf-cxm3
+
+```{r}
+
+#read in county transportation profiles
+transport <- read_csv("County_Transportation_Profiles.csv")
+
+#Filter for California only and select variables of interest
+transport <- transport %>%
+  filter(`State Name` == "California") %>%
+  select(`County FIPS`,`County Name`, `% of Poor Condition Bridges`, `Route miles of passenger railroad and rail transit`) %>%
+  replace(is.na(.), 0) %>%
+  rename(county_code = `County FIPS`,
+         county_name = `County Name`, 
+         per_poor_bridge = `% of Poor Condition Bridges`,
+         miles_rail = `Route miles of passenger railroad and rail transit`)
+         
+
+#Merge with regression data
+reg_dat <- reg_dat %>%
+  left_join(transport, by = c("county_user" = "county_code", 
+                              "county_name_user" = "county_name")) %>%
+    rename(per_poor_bridge_user = per_poor_bridge,
+           miles_rail_user = miles_rail) %>%
+    left_join(transport, by = c("county_fr" = "county_code", 
+                              "county_name_fr" = "county_name")) %>%
+    rename(per_poor_bridge_fr = per_poor_bridge,
+           miles_rail_fr = miles_rail) 
+  
+
+#save reg dat with new farm data
+write_csv(reg_dat, "reg_dat.csv")
+
+
+```
+
+
+## 2.2 Party Voteshare data
+Proxy for misinformation? 
+Possibly also accounting for who uses Facebook? 
+
+
+```{r mitdata}
+# ImportCounty Presidential Election Results 2000-2016 Data
+# from MIT Elections Data & Science Lab
+# https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/VOQCHQ
+
+#read in the county election data used in Fraser
+elections <- read_csv("raw_data/covariates/county_elections.csv")
+
+#change fips code to a double
+elections$fips <- as.numeric(elections$fips)
+
+#Merge with regression data
+reg_dat <- reg_dat %>%
+  left_join(elections, by = c("county_user" = "fips"))
+  
+reg_dat <- reg_dat %>%
+    rename(democrat_2000_user = democrat_2000,
+           democrat_2004_user = democrat_2004, 
+           democrat_2008_user = democrat_2008,
+           democrat_2012_user = democrat_2012,
+           democrat_2016_user = democrat_2016,
+           republican_2000_user = republican_2000,
+           republican_2004_user = republican_2004, 
+           republcian_2008_user = republican_2008,
+           republican_2012_user = republican_2012,
+           republican_2016_user = republican_2016) 
+
+reg_dat <- reg_dat %>%
+  left_join(elections, by = c("county_fr" = "fips")) %>%
+      rename(democrat_2000_fr = democrat_2000,
+           democrat_2004_fr = democrat_2004, 
+           democrat_2008_fr = democrat_2008,
+           democrat_2012_fr = democrat_2012,
+           democrat_2016_fr = democrat_2016,
+           republican_2000_fr = republican_2000,
+           republican_2004_fr = republican_2004, 
+           republcian_2008_fr = republican_2008,
+           republican_2012_fr = republican_2012,
+           republican_2016_fr = republican_2016) 
+
+
+#save reg dat with new farm data
+write_csv(reg_dat, "reg_dat.csv")
+```
+
+#add population densities
+
+```{r}
+
+#get area land 
+land <- tigris::counties(year = "2018") %>%
+  sf::st_as_sf() %>%
+  as.data.frame() %>% ungroup() %>%
+  select(-geometry) %>%
+  select(fips = GEOID, area_land = ALAND) %>%
+  # convert land area, which is measured in square meters, to square kilometers
+  mutate(area_land = as.numeric(area_land) / 1000000) 
+
+#make fips code numeric 
+land$fips <- as.numeric(land$fips)
+
+#merge with reg_dat and calculate population density
+reg_dat <- reg_dat %>%
+  left_join(land, by = c("county_user" = "fips")) %>%
+  rename(area_land_user = area_land) %>%
+    mutate(pop_density_user = pop_user / area_land_user) %>%
+    left_join(land, by = c("county_fr" = "fips")) %>%
+  rename(area_land_fr = area_land) %>%
+    mutate(pop_density_fr = pop_fr / area_land_fr)
+
+#save reg dat with new farm data
+write_csv(reg_dat, "reg_dat_final.csv")
+
+
+```
