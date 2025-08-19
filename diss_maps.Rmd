@@ -1,0 +1,554 @@
+---
+title: "maps_diss"
+author: "Sarah Neubauer"
+date: "2022-08-13"
+output: html_document
+---
+
+# Packages
+```{r}
+#packages
+library(tidyverse)
+library(sf)
+library(gridExtra)
+library(rgdal)
+library(sp)
+#library(rmapshaper)
+#library(randomcoloR)
+library(grid)
+library(jtools)
+#install.packages("jtools")
+#install.packages("interactions")
+library(interactions)
+#install.packages("survey")
+library(survey)
+library(ggplot2)
+#install.packages("huxtable")
+library(sjPlot)
+library(sjmisc)
+library(huxtable)
+library(rgdal)
+library(ggpubr)
+#install.packages("hrbrthemes")
+library(hrbrthemes)
+#install.packages("wesanderson")
+library(wesanderson)
+#install.packages("gtable")
+library(gtable)
+
+#set working directory
+setwd("C:/Users/sarah/Desktop/Dissertation/Data/Diss_Code_Final")
+
+
+```
+
+#Basic Evacuation Overview Maps
+
+```{r}
+#Glass Fire (total counties etc)
+
+# Get Albers Equal Area Conic Projection
+#https://spatialreference.org/ref/esri/north-america-albers-equal-area-conic/
+aea <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=m +no_defs"
+# World Global System 1984
+wgs <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+
+# Let's identify all the counties in our Southeastern Louisiana Sample
+mycounties <- counties <- read_rds("fb_data/glass_fire_nodes_neighborhood.rds")$csub %>%
+  str_sub(1,5) %>% unique()
+
+
+# Now let's import them
+counties <- read_rds("counties.rds") %>%
+            filter(geoid %in% mycounties)
+# Create a single backdrop layer
+back <- counties %>%
+  summarize(geometry = st_union(geometry))
+# Import cities/county subdivisions too
+cities <- read_rds("csub.rds") %>%
+            filter(str_sub(geoid, 1,5) %in% mycounties)
+# Import facebook neighborhoods
+neighborhoods <- read_rds("fb_data/glass_fire_nodes_neighborhood.rds")
+
+# Import key destinations
+points_1 <- bind_rows(
+  data.frame(latitude = 37.7749, longitude = -122.4194,
+             name = "San Francisco"),
+  data.frame(latitude = 38.5616501, longitude = -121.5833423,
+             name = "Sacramento"),
+  data.frame(latitude = 37.2965298, longitude = -122.0982949,
+             name = "San Jose")) %>%
+  st_as_sf(coords = c("longitude", "latitude"),
+           crs = CRS(paste0("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs")))
+
+
+points_2 <- bind_rows(
+  data.frame(latitude = 37.7749, longitude = -122.4194,
+             name = "San Francisco"),
+  data.frame(latitude = 38.5616501, longitude = -121.5833423,
+             name = "Sacramento"),
+  data.frame(latitude = 38.4354662, longitude = -122.8439749,
+             name = "Santa Rosa"),
+  data.frame(latitude = 37.2965298, longitude = -122.0982949,
+             name = "San Jose")) %>%
+  st_as_sf(coords = c("longitude", "latitude"),
+           crs = CRS(paste0("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs")))
+
+
+
+
+g1 <- ggplot() +
+  # Add lines for each city
+  geom_sf(data = back,
+          size = 5, fill = "darkgreen", color = NA) +
+  geom_sf(data = cities,
+          fill = NA, color = "lightgrey", size = 0.5) +
+  # Add county boundaries
+  geom_sf(data = counties, color = "black", size = 1, fill = NA) +
+  # Add points for neighborhoods
+  geom_sf(data = neighborhoods,
+          color = "red", alpha = 0.75, size = 1.5) +
+    geom_sf(data = neighborhoods,
+          color = "grey", alpha = 0.75, size = .5) +
+  # Overlay key cities as labels
+  geom_sf_label(data = points_2, mapping = aes(label = name), size = 2.5) +
+  # Make the theme
+  theme_void(base_size=14) +
+  theme(plot.title = element_text(size=12, face="bold"),
+  plot.subtitle = element_text(size= 9, hjust = 1, face="italic")) +
+   labs(title = "2020 Glass Fire Facebook Recorded Evacuation Points",
+     subtitle = "Neighbourhoods (n=351) by County Subdivision (n = 181) and County (n=32)") +
+  # Add compass and scale
+  ggspatial::annotation_scale(location = "bl", pad_x = unit(0.5, "in")) +
+  ggspatial::annotation_north_arrow(
+    which_north = "true",
+    height = unit(0.25, ""),
+    width = unit(0.25, "in"),
+    location = "bl") 
+
+ggsave("Maps/evac_1.png", g1, dpi = 300, height = 6, width = 8)
+
+###########################
+#MAP 2: Burn Rate and Area# 
+###########################
+
+# Import network
+net <- read_rds("glass_fire_ca.rds") %>%
+  st_transform(crs = aea) %>%
+  filter(evacuation > 0)
+net$geoid <- as.numeric(net$geoid)
+
+# Identify just source and destination communities
+sources <- net %>%
+    mutate(from_geoid = .N()$geoid[from]) %>%
+    as.data.frame() %>%
+    select(geoid = from_geoid) %>%
+    distinct() %>%
+    mutate(source = "source")
+
+
+destinations <- net %>%
+    mutate(to_geoid = .N()$geoid[to]) %>%
+    as.data.frame() %>%
+    select(geoid = to_geoid) %>%
+    distinct() %>% 
+    mutate(destination = "destination")
+
+
+# Let's get the damage which occurred as of the first week after the disaster
+# We can see this by jumping to three weeks after the date of the disaster, 
+# since disaster damage data is lagged by two weeks.
+br <- read_rds("raw_data/ca_dataset.rds") %>%
+  dplyr::select(csub, week, burn_rate_int, evacuation_more) %>%
+  # Disaster ran Sept 27 - Oct. 20, but most of the heaviest damage occurred by Oct 7
+  # We'll get the two-week total,
+  # Adding together the approximate percentage burned for the following weeks
+  # Sept 28-Oct 04 ("2020-10-04", lagged two weeks so we need "2020-10-19")
+  # Oct 04 - Oct 11 ("2020-10-12", lagged two weeks so we need "2020-10-26")
+  filter(week == "2020-10-19" | week == "2020-10-26") %>%
+  group_by(csub) %>%
+  summarize(burn_rate_int = sum(burn_rate_int, na.rm = TRUE),
+            evacuation_more = sum(evacuation_more, na.rm = TRUE)) %>%
+  ungroup() %>%
+  # Join in and make identifier for source/destination/both/neither towns
+  left_join(by = c("csub" = "geoid"), y = sources) %>%
+  left_join(by = c("csub" = "geoid"), y = destinations) %>%
+  mutate(site_type = case_when(
+    destination == "destination" & source != "source" ~ "Destination",
+    destination == "destination" & source == "source" ~ "Source & Destination",
+    destination != "destination" & source == "source" ~ "Source",
+    TRUE ~ "No evacuees") %>%
+      factor(levels = c("Source", "Destination", "Source & Destination", "No evacuees"))) %>%
+  select(-source, -destination)
+
+remove(sources, destinations)
+
+# Get 5-digit fips codes for affected counties
+mycounties <- read_rds("raw_data/glass_fire_counties.rds")
+
+# Get county subdivision polygons
+shapes <- read_rds("csub.rds") %>%
+  filter(str_sub(geoid, 1,5) %in% mycounties) %>%
+  st_transform(crs = aea) %>%
+  # also join in the subdivision covariate data
+  left_join(by = c("geoid" = "csub"), y = dat)
+
+# Get centroids
+centroids <- net %>%
+  st_as_sf("nodes") %>%
+  left_join(by = c("geoid" = "csub"), y = dat) %>%
+  filter(!is.na(evacuation_more)) %>%
+  filter(site_type != "No evacuees")
+
+
+# Get county polygons
+counties <- read_rds("counties.rds") %>%
+  filter(geoid %in% mycounties) %>%
+  st_transform(crs = aea) 
+
+# Get edges
+edges <- net %>%
+  filter(evacuation > 0) %>%
+  st_as_sf("edges")
+
+g2 <- ggplot() +
+  # Set a nice grey outline to map over
+  geom_sf(data = counties, fill = NA, color = "darkgrey", size = 2) +
+  # Map damage proxy at county subdivision level
+  geom_sf(data = shapes, mapping = aes(fill = burn_rate_int), size = 0.1) +
+  # Show counties
+  # Add white edges to highlight pathways
+  geom_sf(data = edges, mapping = aes(width = evacuation), color = "white", alpha = 0.15) +
+  # Overlay county boundaries on top
+  geom_sf(data = counties, fill = NA, color = "black", size = 0.5) +
+  # This adds a nice white outline around the points
+  geom_sf(data = centroids, mapping = aes(color = site_type,
+                                          size = evacuation_more + 15), color = "white", show.legend = TRUE) +
+  geom_sf(data = centroids, mapping = aes(color = site_type,
+                                          size = evacuation_more)) +
+  theme_void(base_size = 14) +
+  viridis::scale_fill_viridis(option = "rocket") +
+  scale_color_manual(values = c("#648FFF", "black")) +
+  theme(legend.position = "right",
+        legend.text = element_text(size=7),
+        legend.title = element_text(size= 9),
+        plot.title = element_text(size=12, face = "bold"),
+        plot.subtitle = element_text(size= 9, hjust = 0.5,face= "italic"),
+        plot.margin = margin(0,0,0,0, unit = "in")) +
+   # Overlay key cities as labels
+  geom_sf_label(data = points_1, mapping = aes(label = name), size =2.5,
+                nudge_x = c(-10)) +
+  guides(fill = guide_colorbar(barwidth = 1, barheight = 5)) +
+  labs(fill = "% Estimated\nArea Burned\nSept. 28 to\nOct. 12, 2020",
+       color = "Cities Tracked",
+       size = "Total Evacuees\nper 1,000 residents",
+       subtitle = "Napa & Sonoma Counties",
+       title = "Glass Fire 2020 Burn Map") +
+   scale_size_continuous(breaks = c(0, 25, 50, 75, 100)) +
+ ggspatial::annotation_scale(location = "bl", pad_x = unit(0.5, "in")) +
+  ggspatial::annotation_north_arrow(
+    which_north = "true",
+    height = unit(0.25, "in"),
+    width = unit(0.25, "in"),
+    location = "bl") 
+
+ggsave("Maps/evac_g2.png", g2, dpi = 300, height = 6, width = 6)
+
+
+```
+
+
+#SCI Maps: High and Low Bonding, High and Low Bridging
+
+Need to do:
+
+Get a dataset with ALL csubs
+Identify:
+(1) Highest BONDING for area, Highest bonding for Sonoma/Napa
+(2) Lowest BONDING for area, Lowest bonding for Sonoma/Napa
+(3) Highest Bridging for area, highest bridging for Sonoma/Napa
+(4) Lowest Briding for area, lowest bridging for Sonoma/Napa
+
+
+
+```{r}
+
+#Get evacuation data
+evac_csub <- read_csv("evac_csub.csv") %>%
+  filter(type == "overall_evacuaton") %>%
+  group_by(from_csub, to_csub) %>%
+  summarise(evacuation = sum(evacuation, na.rm=TRUE))
+
+#merge with SoCap data (bonding and bridging)
+soc_cap <- read.csv("index_csub_V3_04_10_2022.csv")
+
+#filter for california and 2020 only
+soc_cap <- soc_cap %>%
+  filter(state == "CA") %>%
+  filter (year == 2020) 
+
+evac_csub <- evac_csub %>%
+  left_join(soc_cap, by = c("from_csub" = "geoid"))
+
+#join in the SCI data
+evac_csub <- evac_csub %>%
+  left_join(sci_cali_csd, by = c("from_csub" = "csd_user",
+                                 "to_csub" = "csd_fr"))
+
+                                  
+#get county and CSD names
+csub_name$geoid <- as.numeric(csub_name$geoid)
+
+evac_csub <- evac_csub %>%
+  left_join(csub_name, by = c("from_csub" = "geoid")) 
+
+evac_csub$from_csub <- as.character(evac_csub$from_csub)
+
+us_pop2 <- us_pop %>%
+  select(CSD,pop_csd)%>%
+  distinct() %>%
+  rename(csub = "CSD")
+
+
+evac_csub <- evac_csub %>%
+   mutate(county = as.numeric(str_sub(from_csub,1,4)),
+          from_csub = as.numeric(from_csub)) %>%
+  left_join(county_name, by = c("county" = "geoid")) %>%
+  rename(csub_name = name.x,
+         county_name = name.y) %>%
+  left_join(us_pop2, by=c("from_csub" = "csub")) %>%
+    group_by(from_csub) %>%
+  mutate(evac_pc = evacuation/pop_csd,
+         evac_pc_log = log(evac_pc)) %>%
+  ungroup()
+
+evac_csub$evac_pc_log[evac_csub$evac_pc_log== -Inf]<- 0
+  
+
+#Scatterplots!!
+
+#Bonding
+ggplot(evac_csub, aes(x=log_sci_csd, y=evac_pc_log, colour= bonding)) + 
+    geom_point(size=2) +
+   scale_color_gradient(low="blue", high="red")
+
+#Bridging
+ggplot(evac_csub, aes(x=log_sci_csd, y=evac_pc_log, colour= bridging)) + 
+    geom_point(size=2) +
+   scale_color_gradient(low="blue", high="red")
+```
+
+
+Overall Bonding
+
+```{r}
+#Maps
+
+#High Bonding vs Low Bonding
+
+###Map Bonding##
+# Get county subdivision polygons
+shapes <- read_rds("csub.rds") %>%
+  filter(str_sub(geoid, 1,5) %in% mycounties) %>%
+  st_transform(crs = aea) %>%
+  mutate(geoid = as.numeric(geoid)) %>%
+  # also join in with evac data
+  left_join(soc_cap, by = c("geoid" = "geoid"))
+
+
+g3 <- ggplot() +
+  #map over counties
+  geom_sf(data = counties, fill = NA, color = "darkgrey", size = 2) +
+  # Map damage proxy at county subdivision level
+  geom_sf(data = shapes, mapping = aes(fill = bonding), size = 0.1) +
+    # Add points for neighborhoods
+  geom_sf(data = neighborhoods,
+          color = "red", alpha = 0.75, size = 1.5) +
+    geom_sf(data = neighborhoods,
+          color = "grey", alpha = 0.75, size = .5) +
+  # Show counties
+  # Add white edges to highlight pathways
+  geom_sf(data = edges, mapping = aes(width = evacuation), color = "white", alpha = 0.15) +
+   geom_sf(data = counties, fill = NA, color = "black", size = 0.5) +
+  theme_void(base_size = 14) +
+  viridis::scale_fill_viridis(option = "viridis") +
+    guides(fill = guide_colorbar(barwidth = 1, barheight = 5)) +
+  labs(fill = "Bonding Rates",
+       size = "Total Evacuees\nper 1,000 residents",
+       title = "Glass Fire 2020: Area Bonding Rates") +
+   scale_size_continuous(breaks = c(0, 25, 50, 75, 100)) +
+ ggspatial::annotation_scale(location = "bl", pad_x = unit(0.5, "in")) +
+  ggspatial::annotation_north_arrow(
+    which_north = "true",
+    height = unit(0.25, "in"),
+    width = unit(0.25, "in"),
+    location = "bl") 
+
+g3
+  
+ggsave("Maps/evac_g3.png", g3, dpi = 300, height = 6, width = 6)
+
+```
+
+
+Overall Bridging
+
+```{r}
+g4 <- ggplot() +
+  #map over counties
+  geom_sf(data = counties, fill = NA, color = "darkgrey", size = 2) +
+  # Map damage proxy at county subdivision level
+  geom_sf(data = shapes, mapping = aes(fill = bridging), size = 0.1) +
+    # Add points for neighborhoods
+  geom_sf(data = neighborhoods,
+          color = "red", alpha = 0.75, size = 1.5) +
+    geom_sf(data = neighborhoods,
+          color = "grey", alpha = 0.75, size = .5) +
+  # Show counties
+  # Add white edges to highlight pathways
+  geom_sf(data = edges, mapping = aes(width = evacuation), color = "white", alpha = 0.15) +
+   geom_sf(data = counties, fill = NA, color = "black", size = 0.5) +
+  theme_void(base_size = 14) +
+  viridis::scale_fill_viridis(option = "viridis") +
+    guides(fill = guide_colorbar(barwidth = 1, barheight = 5)) +
+  labs(fill = "Bridging Rates",
+       size = "Total Evacuees\nper 1,000 residents",
+       title = "Glass Fire 2020: Area Bridging Rates") +
+   scale_size_continuous(breaks = c(0, 25, 50, 75, 100)) +
+ ggspatial::annotation_scale(location = "bl", pad_x = unit(0.5, "in")) +
+  ggspatial::annotation_north_arrow(
+    which_north = "true",
+    height = unit(0.25, "in"),
+    width = unit(0.25, "in"),
+    location = "bl") 
+  
+ggsave("Maps/evac_g4.png", g4, dpi = 300, height = 6, width = 6)
+
+
+g4
+
+```
+
+
+#SCI Maps 1
+
+
+```{r}
+#mapping
+sci_map2 <- soc_cap %>% 
+  left_join(sci_cali_csd, by=c("geoid"="csd_user")) %>%
+  filter()
+  group_by(geoid) %>%
+  summarise(log_sci_csd = sum(log_sci_csd, na.rm=TRUE))
+
+#shape file
+# Get county subdivision polygons
+shapes <- read_rds("csub.rds") %>%
+  filter(str_sub(geoid, 1,5) %in% mycounties) %>%
+  st_transform(crs = aea) %>%
+  mutate(geoid = as.numeric(geoid)) %>%
+  left_join(sci_cali_csd, by = c("geoid"="csd_user")) %>%
+  drop_na() %>%
+  filter(geoid != csd_fr) %>%
+   group_by(geoid) %>%
+  summarise(log_sci_csd = sum(log_sci_csd, na.rm=TRUE))
+
+
+g5 <- ggplot() +
+  #map over counties
+  geom_sf(data = counties, fill = "darkgrey", color = "darkgrey", size = 2) +
+  # Map damage proxy at county subdivision level
+  geom_sf(data = shapes, mapping = aes(fill = log_sci_csd), size = 0.1) +
+  scale_fill_continuous(na.value="darkgrey") +
+    # Add points for neighborhoods
+  geom_sf(data = neighborhoods,
+          color = "red", alpha = 0.75, size = 1.5) +
+    geom_sf(data = neighborhoods,
+          color = "grey", alpha = 0.75, size = .5) +
+  # Show counties
+  # Add white edges to highlight pathways
+  geom_sf(data = edges, mapping = aes(width = evacuation), color = "white", alpha = 0.15) +
+   geom_sf(data = counties, fill = NA, color = "black", size = 0.5) +
+  theme_void(base_size = 14) +
+  viridis::scale_fill_viridis(option = "viridis") +
+    guides(fill = guide_colorbar(barwidth = 1, barheight = 5)) +
+  labs(fill = "Log SCI",
+       size = "Total Evacuees\nper 1,000 residents",
+       title = "Glass Fire 2020",
+       subtitle= "Total connectedness of each county sub-division") +
+   scale_size_continuous(breaks = c(0, 25, 50, 75, 100)) +
+ ggspatial::annotation_scale(location = "bl", pad_x = unit(0.5, "in")) +
+  ggspatial::annotation_north_arrow(
+    which_north = "true",
+    height = unit(0.25, "in"),
+    width = unit(0.25, "in"),
+    location = "bl") 
+g5
+
+ggsave("Maps/evac_g5.png", g5, dpi = 300, height = 6, width = 6)
+
+
+
+```
+
+
+
+#Case Study Tables 
+
+```{r}
+
+66*666
+
+
+
+#add interaction variables
+reg_dat_new <- reg_dat_new %>%
+  mutate(scixbond = log_sci_csd*bonding_user,
+         scixbridge = log_sci_csd*bridging_user) 
+
+cases2 <- reg_dat_new %>%
+  select(csd_user,csd_fr, scixbond,scixbridge, evacuation, log_evac_pc) 
+  
+
+#cities
+cities$geoid <- as.numeric(cities$geoid)
+
+
+#filter for places of interest
+cases <- evac_csub2 %>%
+  filter(name %in% c("Isleton","Calistoga","Sutter","Petaluma","Los Banos","Sonoma","Point Arena","Russian River-Sonoma Coast")) %>%
+  left_join(cities, by=c("to_csub"="geoid")) %>%
+  left_join(us_pop, by=c("from_csub" = "CSD")) %>%
+  mutate(evac_pc = evacuation/pop_csd) %>%
+  mutate(evac_pc_log = log(evac_pc)) %>%
+  select(from_csub, to_csub, evacuation, bonding, bridging, log_sci_csd,sci_csd, name.x,name.y,pop_csd, evac_pc, evac_pc_log) %>%
+  distinct()
+  
+3.681827e-04
+  
+  
+1.192290e-01
+
+
+summary(cases)
+
+stargazer(cases, type = "html", out="case_study.doc", 
+          title = "Evacuation Case Studies")
+
+
+formattable(cases)
+
+
+write.csv(cases, "case_study.csv")
+
+```
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,986 @@
+---
+title: "diss_visualisations"
+author: "Sarah Neubauer"
+date: '2022-06-29'
+output: pdf_document
+---
+
+This document produces the visualisations for my dissertation- to be used after data_prep_diss document (same variables are used)
+
+
+# 0. Packages
+
+```{r, message = FALSE, warning = FALSE}
+
+#packages
+library(tidyverse)
+library(sf)
+library(gridExtra)
+library(rgdal)
+library(sp)
+#library(rmapshaper)
+#library(randomcoloR)
+library(grid)
+library(jtools)
+#install.packages("jtools")
+#install.packages("interactions")
+library(interactions)
+#install.packages("survey")
+library(survey)
+library(ggplot2)
+#install.packages("huxtable")
+library(sjPlot)
+library(sjmisc)
+library(huxtable)
+
+#set working directory
+setwd("C:/Users/sarah/Desktop/Dissertation/Data/Diss_Code_Final")
+
+```
+
+
+# 1. Scatterplots: Overall Evacuation
+
+```{r}
+
+#Calulate overall evacuation (not over time, just total)
+reg_dat2 <- aggregate(reg_dat$evacuation_per_thous, by=list(reg_dat$csd_user,reg_dat$csd_fr), FUN=sum)
+
+reg_dat2 <- reg_dat2 %>%
+  rename(csd_user = Group.1,
+         csd_fr = Group.2,
+         evacuation_per_thous = x) %>%
+  mutate(log_evac_pc = log(evacuation_per_thous)) 
+
+sci <- reg_dat %>%
+  select(csd_user, csd_fr, sci_csd, log_sci_csd) %>%
+  distinct()
+
+reg_dat2 <- sci %>%
+  left_join(reg_dat2, by = c("csd_user" = "csd_user", "csd_fr" = "csd_fr"))
+
+
+
+x <- reg_dat2$log_evac_pc
+y <- reg_dat2$log_sci_csd
+
+z <- reg_dat_new$unique(linking_user)
+
+
+
+plot(x,y, xlab = "Log Evacuation Per Capita", ylab = "Log SCI")
+abline(lm(y ~ x, data=reg_dat2), col = "red")
+
+
+plot(x,z, xlab = "Log Evacuation Per Capita", ylab = "Linking")
+
+```
+
+# 2. Scatterplots: SCI and SVI and Social Capital
+Scatterplots to investigate interaction models
+Uses variables from code_regs and data_prep_diss3
+
+This is visual analysis of the interaction effects between various levels of evacuation, SCI, SVI and Social Capital.
+
+```{r}
+
+#Overall Evacuation
+# 2 sig interaction
+# GLS 
+
+#1: Bonding
+
+#Overall evacuation has a sig interaction with bonding
+interact_plot(r1.gls_int5, pred=log_sci_csd, modx= bonding_user, linearity.check=TRUE)
+
+#this indicates that the current reg is not meeting a linearity check, meaning we should add a quadratic variable for log_sci_csd
+interact_plot(r1.gls_int5_nl, pred=bonding_user, modx= log_sci_csd, n.sd= 2, x.label= "Bonding", y.label="Logged Evacuation per capita", legend.main = "Log SCI", main.title="Figure 3: Overall Evacuation Interaction- SCI and Bonding", data=overall_evac)
+
+interact_plot(model, pred, modx, modxvals = NULL, mod2 = NULL,
+  mod2vals = NULL, centered = NULL, scale = FALSE, n.sd = 1,
+  plot.points = FALSE, interval = FALSE, int.type = c("confidence",
+  "prediction"), int.width = 0.95, outcome.scale = "response",
+  linearity.check = FALSE, set.offset = 1, x.label = NULL,
+  y.label = NULL, pred.labels = NULL, modx.labels = NULL,
+  mod2.labels = NULL, main.title = NULL, legend.main = NULL,
+  color.class = NULL, line.thickness = 1.1, vary.lty = TRUE,
+  jitter = 0.1, standardize = NULL)
+
+#Reviewing the slopes
+#By reviewing the slops we are understanding the conditional slope on different values of the two terms in our interaction- allows us to specify more meaningful values
+johnson_neyman(r1.gls_int5_nl, pred=log_sci_csd, modx=bonding_user, alpha=0.05, title = "Figure 1: Overall Evacuation Interaction- SCI and Bonding")
+johnson_neyman()
+
+r1_bond <- sim_slopes(r1.gls_int5_nl, pred=bonding_user, modx=log_sci_csd, data=overall_evac,  johnson_neyman = TRUE, jnplot = TRUE)
+
+as_huxtable(r1_bond)
+
+#may need to calculate slopes manually as this package doesn't seem to like weights??
+plot(slope_r1)
+
+
+#2: Bridging
+
+
+#Overall evacuation has a sig interaction with bridging
+interact_plot(r1.gls_int6_nl, pred=log_sci_csd, modx= bridging_user, linearity.check=TRUE)
+
+#this indicates that the current reg is not meeting a linearity check, meaning we should add a quadratic variable for log_sci_csd
+interact_plot(r1.gls_int6_nl, pred=log_sci_csd, modx= bridging_user, data=overall_evac)
+
+interact_plot(r1.gls_int6_nl, pred=bridging_user, modx= log_sci_csd, n.sd= 2, x.label= "Bridging", y.label="Logged Evacuation per capita", legend.main = "Log SCI", main.title="Figure C: Overall Evacuation Interaction- SCI and Bridging", data=overall_evac)
+
+#Reviewing the slopes
+#By reviewing the slops we are understanding the conditional slope on different values of the two terms in our interaction- allows us to specify more meaningful values
+johnson_neyman(r1.gls_int6, pred=log_sci_csd, modx=bridging_user, alpha=0.05)
+
+
+sim_slopes(r1.gls_int6_nl, pred=bridging_user, modx=log_sci_csd, modx.values = c(0,0.1,0.7,1), data=overall_evac,  johnson_neyman = TRUE, jnplot = TRUE)
+
+#may need to calculate slopes manually as this package doesn't seem to like weights??
+plot(slope_r1)
+
+
+
+```
+
+```{r}
+#(3) Local Evacuation
+# GLS is best
+# 3 sig interactions: 
+# - (A) SVI Household/Disablity
+#Check linearity
+interact_plot(r3.gls_int2_nl, pred=log_sci_csd, modx= svi_household_disability_user, data=reg_intra_more, linearity.check=TRUE)
+
+#Data doesn't appear to be linear- add a quadratic 
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r3.gls_int2_nl, pred=svi_household_disability_user, modx=log_sci_csd, alpha=0.05)
+
+AIC(r3.gls_int2_nl,r3.gls_int2)
+#linear is a better fit
+
+#Calculate slopes
+sim_slopes(r3.gls_int2_nl, pred=log_evac, modx=svi_household_disability_user, data=reg_intra_more,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r3.gls_int2_nl, pred = svi_household_disability_user, modx = log_sci_csd, data=reg_intra_more, cond.int = TRUE,
+                  interval = TRUE,  jnplot = TRUE)
+
+
+# - bonding
+#Check linearity
+interact_plot(r3.gls_int5, pred=log_sci_csd, modx= bonding_user, data=reg_intra_more, linearity.check=TRUE, title= "Local Evaucation: SCI X Bonding Interaction")
+
+interact_plot(r3.gls_int5, pred=bonding_user, modx= log_sci_csd, n.sd= 2, x.label= "Bonding", y.label="Logged Evacuation per capita", legend.main = "Log SCI", main.title="Figure A: Local Evacuation Interaction- SCI and Bonding", data=reg_intra_more)
+
+#Data doesn't appear to be linear- add a quadratic 
+AIC(r3.gls_int5_nl,r3.gls_int5)
+#linear is a better fit- go back to the original model
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r3.gls_int5, pred=bonding_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r3.gls_int5_nl, pred=bonding_user, modx=log_sci_csd, data=reg_intra_more,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r3.gls_int5_nl, pred= bonding_user, modx= log_sci_csd, data=reg_intra_more,  jnplot = TRUE, title= "Local Evaucation: SCI X Bonding Interaction")
+
+# - linking
+#Check linearity
+interact_plot(r3.gls_int7, pred=log_sci_csd, modx= linking_user, data=reg_intra_more, linearity.check=TRUE) + theme_apa()
+
+#Data doesn't appear to be linear- add a quadratic 
+AIC(r3.gls_int7_nl,r3.gls_int7)
+#linear is a better fit- go back to the original model
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r3.gls_int7, pred=linking_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r3.gls_int7, pred=linking_user, modx=log_sci_csd, modx.values= c(30,35,40), data=reg_intra_more,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r3.gls_int7, pred=linking_user, modx=log_sci_csd, data=reg_intra_more, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE)
+
+```
+
+```{r}
+#(4) Long Distance Reduced
+# GLS is best
+# 6 sig interactions:
+
+# -SVI Socioeconomic
+#Check linearity
+interact_plot(r4.gls_int1, pred=log_sci_csd, modx=  svi_socioeconomic_user, data=reg_inter_less, linearity.check=TRUE)
+#Data doesn't appear to be linear- add a quadratic 
+
+AIC(r4.gls_int1_nl,r4.gls_int1)
+#non-linear is a better fit
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r4.gls_int1, pred=svi_socioeconomic_user, modx=log_sci_csd, alpha=0.05)
+
+johnson_neyman(r4.gls_int1, pred=log_sci_csd, modx=svi_socioeconomic_user, alpha=0.05)
+
+
+#Calculate slopes
+sim_slopes(r4.gls_int1_nl, pred=svi_socioeconomic_user, modx=log_sci_csd, data=reg_inter_less,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r4.gls_int1_nl, pred=svi_socioeconomic_user, modx=log_sci_sqr, data=reg_inter_less, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE, terciles = TRUE)
+
+# -SVI Housing Disability
+#Check linearity
+interact_plot(r4.gls_int2, pred=log_sci_csd, modx=svi_household_disability_user , data=reg_inter_less, linearity.check=TRUE)
+#Data doesn't appear to be linear- add a quadratic 
+
+AIC(r4.gls_int2_nl,r4.gls_int2)
+#non-linear is a better fit
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r4.gls_int2_nl, pred=svi_household_disability_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r4.gls_int2_nl, pred=svi_household_disability_user, modx=log_sci_csd, data=reg_inter_less,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r4.gls_int2_nl, pred=svi_household_disability_user, modx=log_sci_csd, data=reg_inter_less, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE)
+
+
+# -SVI Minority
+#Check linearity
+interact_plot(r4.gls_int3, pred=log_sci_csd, modx=svi_minority_user, data=reg_inter_less, linearity.check=TRUE)
+#Data doesn't appear to be linear- add a quadratic 
+
+AIC(r4.gls_int3_nl,r4.gls_int3)
+#non-linear is a better fit
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r4.gls_int3_nl, pred=svi_minority_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r4.gls_int3_nl, pred=svi_minority_user, modx=log_sci_csd, data=reg_inter_less,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r4.gls_int3_nl, pred=svi_minority_user, modx=log_sci_csd, data=reg_inter_less, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE)
+
+
+# -SVI Housing/Transport
+#Check linearity
+interact_plot(r4.gls_int4, pred=log_sci_csd, modx=svi_housing_transport_user, data=reg_inter_less, linearity.check=TRUE)
+#Data doesn't appear to be linear- add a quadratic 
+
+AIC(r4.gls_int4_nl,r4.gls_int4)
+#non-linear is a better fit
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r4.gls_int4_nl, pred=svi_housing_transport_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r4.gls_int4_nl, pred=svi_housing_transport_user, modx=log_sci_csd, data=reg_inter_less,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r4.gls_int4_nl, pred=svi_housing_transport_user, modx=log_sci_csd, data=reg_inter_less, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE)
+
+# -Bonding
+#Check linearity
+interact_plot(r4.gls_int5, pred=log_sci_csd, modx=bonding_user, data=reg_inter_less, linearity.check=TRUE, title= "Local Sheltering in Place: SCI X Bonding Interaction")
+#Data doesn't appear to be linear- add a quadratic 
+
+AIC(r4.gls_int5_nl,r4.gls_int5)
+#non-linear is a better fit
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r4.gls_int5_nl, pred=bonding_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r4.gls_int5_nl, pred=bonding_user, modx=log_sci_csd, data=reg_inter_less,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r4.gls_int5_nl, pred=bonding_user, modx=log_sci_csd, data=reg_inter_less, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE, title= "Local Evaucation: SCI X Bonding Interaction")
+
+interact_plot(r4.gls_int5_nl, pred=bonding_user, modx= log_sci_csd, n.sd= 2, x.label= "Bonding", y.label="Logged Shelter In Place per capita", legend.main = "Log SCI", main.title="Figure E: Long Distance Reduced Mobility Interaction- SCI and Bonding", data=reg_inter_less)
+
+
+#Bridging
+interact_plot(r4.gls_int6, pred=bridging_user, modx= log_sci_csd, n.sd= 2, x.label= "Bridging", y.label="Logged Shelter In Place per capita", legend.main = "Log SCI", main.title="Figure F: Long Distance Reduced Mobility Interaction- SCI and Bridging", data=reg_inter_less)
+
+# -Linking
+#Check linearity
+interact_plot(r4.gls_int7, pred=log_sci_csd, modx=linking_user, data=reg_inter_less, linearity.check=TRUE)
+#Data doesn't appear to be linear- add a quadratic 
+
+AIC(r4.gls_int7_nl,r4.gls_int7)
+#non-linear is a better fit
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r4.gls_int7_nl, pred=linking_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r4.gls_int7_nl, pred=linking_user, modx=log_sci_csd, data=reg_inter_less,  johnson_neyman = TRUE, jnplot = TRUE)
+
+probe_interaction(r4.gls_int7_nl, pred=linking_user, modx=log_sci_csd, data=reg_inter_less, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE)
+
+```
+
+
+```{r}
+#(5) Long Distance Evacuation
+# PLM is best (add robust SE) after
+# 4 sig interactions:
+
+#Note that PLM is not supported in the interaction package. To support there therefore need to convert PLM into an LM with fixed effects and then add robust SE after
+
+##1- SVI Socioeconomic
+#########################
+
+#factor day for fixed effects
+reg_inter_more[ , "day"] <- factor(reg_inter_more[ , "day"])
+
+r5_lm_int1 <- lm(log_evac_pc ~ log_sci_csd 
+            + bonding_user + bridging_user + linking_user + 
+            svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +    
+            transit_user + workplaces_user + grocery_pharm_user + parks_user + residential_user + retail_recreation_user 
+           + employee_muni_user 
+           + pop_density_diff
+           + daily_burn_diff
+           + num_irr_user 
+           + num_farm_user
+           + dist 
+           + democrat_2016_diff
+           + (svi_socioeconomic_user*log_sci_csd) + day, data = reg_inter_more)
+
+summary(r5_lm_int1)
+
+#Check linearity
+interact_plot(r5_lm_int1, pred=log_sci_csd, modx=  svi_socioeconomic_user, data=reg_inter_more, robust=TRUE, linearity.check=TRUE)
+
+
+
+#Data doesn't appear to be linear- add a quadratic 
+#compare between LM and PLM and LM with a quadratic
+AIC(r5_lm_int1,r5_plm_int1,r5_lm_int1_nl)
+#non-linear model with LM is the better model!
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r5_lm_int1_nl, pred=svi_socioeconomic_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r5_lm_int1_nl, pred=svi_socioeconomic_user, modx=log_sci_csd, data=reg_inter_more,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r5_lm_int1_nl, pred=svi_socioeconomic_user, modx=log_sci_csd, data=reg_inter_more, cond.int = TRUE,
+                  interval = FALSE, robust=TRUE, jnplot = TRUE)
+
+##2- SVI Household 
+#########################
+
+#change from PLM to LM for interaction package
+r5_lm_int2 <- lm(log_evac_pc ~ log_sci_csd 
+            + bonding_user + bridging_user + linking_user + 
+            svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +    
+            transit_user + workplaces_user + grocery_pharm_user + parks_user + residential_user + retail_recreation_user 
+           + employee_muni_user 
+           + pop_density_diff
+           + daily_burn_diff
+           + num_irr_user 
+           + num_farm_user
+           + dist 
+           + democrat_2016_diff
+           + (svi_household_disability_user*log_sci_csd) + day, data = reg_inter_more)
+
+summary(r5_lm_int2)
+
+#Check linearity
+interact_plot(r5_lm_int2, pred=log_sci_csd, modx=  svi_household_disability_user, data=reg_inter_more, robust=TRUE, linearity.check=TRUE)
+#Data doesn't appear to be linear- add a quadratic 
+
+#compare between LM and PLM and LM with a quadratic
+AIC(r5_lm_int2,r5_plm_int2,r5_lm_int2_nl)
+#non-linear model with LM is the better model!
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r5_lm_int2_nl, pred=svi_household_disability_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r5_lm_int2_nl, pred=svi_household_disability_user, modx=log_sci_csd, data=reg_inter_more,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r5_lm_int2_nl, pred=svi_household_disability_user, modx=log_sci_csd, data=reg_inter_more, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE, robust=TRUE)
+
+
+##3- SVI Housing Transport
+#########################
+
+#change from PLM to LM for interaction package
+r5_lm_int4 <- lm(log_evac_pc ~ log_sci_csd 
+            + bonding_user + bridging_user + linking_user + 
+            svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +    
+            transit_user + workplaces_user + grocery_pharm_user + parks_user + residential_user + retail_recreation_user 
+           + employee_muni_user 
+           + pop_density_diff
+           + daily_burn_diff
+           + num_irr_user 
+           + num_farm_user
+           + dist 
+           + democrat_2016_diff
+           + (svi_housing_transport_user*log_sci_csd) + day, data = reg_inter_more)
+
+summary(r5_lm_int4)
+
+#Check linearity
+interact_plot(r5_lm_int4, pred=svi_housing_transport_user , modx=log_sci_csd , data=reg_inter_more, robust=TRUE, linearity.check=TRUE)
+#Data doesn't appear to be linear- add a quadratic 
+
+#compare between LM and PLM and LM with a quadratic
+AIC(r5_lm_int4,r5_plm_int4,r5_lm_int4_nl)
+#non-linear model with LM is the better model!
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r5_lm_int4_nl, pred=svi_housing_transport_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r5_lm_int4_nl, pred=svi_housing_transport_user, modx=log_sci_csd, data=reg_inter_more,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r5_lm_int4_nl, pred=svi_housing_transport_user, modx=log_sci_csd, data=reg_inter_more, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE, robust=TRUE)
+
+##4- Bridging
+#########################
+
+#change from PLM to LM for interaction package
+r5_lm_int6 <- lm(log_evac_pc ~ log_sci_csd 
+            + bonding_user + bridging_user + linking_user + 
+            svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +    
+            transit_user + workplaces_user + grocery_pharm_user + parks_user + residential_user + retail_recreation_user 
+           + employee_muni_user 
+           + pop_density_diff
+           + daily_burn_diff
+           + num_irr_user 
+           + num_farm_user
+           + dist 
+           + democrat_2016_diff
+           + (bridging_user*log_sci_csd) + day, data = reg_inter_more)
+
+summary(r5_lm_int6)
+
+#Check linearity
+interact_plot(r5_lm_int6, pred=bridging_user , modx=log_sci_csd , data=reg_inter_more, robust=TRUE, linearity.check=TRUE)
+#Data doesn't appear to be linear- add a quadratic 
+
+#compare between LM and PLM and LM with a quadratic
+AIC(r5_lm_int6,r5_plm_int6,r5_lm_int6_nl)
+#plm is the better model
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r5_lm_int6_nl, pred=bridging_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r5_lm_int6_nl, pred=bridging_user,modx=log_sci_csd, data=reg_inter_more,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r5_lm_int6_nl, pred=bridging_user, modx=log_sci_csd, data=reg_inter_more, cond.int = TRUE,
+                  interval = FALSE,  jnplot = TRUE, robust=TRUE)
+
+
+interact_plot(r5_gls_int5_nl, pred=bonding_user, modx= log_sci_csd, n.sd= 2, x.label= "Bonding", y.label="Logged Evacuation per capita", legend.main = "Log SCI", main.title="Figure B:Long Distance Evacuation Interaction- SCI and Bonding", data=reg_inter_more)
+
+interact_plot(r5_lm_int6_nl, pred=bridging_user, modx= log_sci_csd, n.sd= 2, x.label= "Bridging", y.label="Logged Evacuation per capita", legend.main = "Log SCI", main.title="Figure D:Long Distance Evacuation Interaction- SCI and Bridging", data=reg_inter_more)
+
+
+
+```
+
+
+```{r}
+
+#(6) Shelter in place
+# PLM is best
+# 7 sig interactions
+
+#Note that PLM is not supported in the interaction package. To support there therefore need to convert PLM into an LM with fixed effects and then add robust SE after
+
+##1- SVI Socioeconomic
+#########################
+
+#factor day for fixed effects
+r6_lm_int1 <- lm(log_evac_pc ~ log_sci_csd 
+             + bonding_user + bridging_user + linking_user + 
+             svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +
+           grocery_pharm_user + 
+             residential_user + retail_recreation_user 
+           + employee_muni_user 
+          + dist 
+          + democrat_2016_diff
+          + factor(day)
+          + (svi_socioeconomic_user*log_sci_csd), data = reg_shelter)
+
+summary(r6_lm_int1)
+
+#Check linearity
+interact_plot(r6_lm_int1, pred=svi_socioeconomic_user, modx=  log_sci_csd, data=reg_shelter, robust=TRUE, linearity.check=TRUE)
+
+#Data doesn't appear to be linear- add a quadratic 
+#compare between LM and PLM and LM with a quadratic
+AIC(r6_lm_int1,r6_plm_reduced_int1,r6_lm_int1_nl)
+
+#PLM is the best, but non-quadratic is better than quadratic, so will keep the basic LM model (over NL)
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r5_lm_int1, pred=svi_socioeconomic_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r6_lm_int1, pred=svi_socioeconomic_user, modx=log_sci_csd, data=reg_shelter,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r6_lm_int1, pred=svi_socioeconomic_user, modx=log_sci_csd, data=reg_shelter, cond.int = TRUE,
+                  interval = FALSE, robust=TRUE, jnplot = TRUE)
+
+
+##2- SVI Household Disablity 
+###########################
+
+#factor day for fixed effects
+r6_lm_int2 <- lm(log_evac_pc ~ log_sci_csd 
+             + bonding_user + bridging_user + linking_user + 
+             svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +
+           grocery_pharm_user + 
+             residential_user + retail_recreation_user 
+           + employee_muni_user 
+          + dist 
+          + democrat_2016_diff
+          + factor(day)
+          + (svi_household_disability_user*log_sci_csd), data = reg_shelter)
+
+summary(r6_lm_int2)
+
+#Check linearity
+interact_plot(r6_lm_int2, pred=svi_household_disability_user , modx=  log_sci_csd, data=reg_shelter, robust=TRUE, linearity.check=TRUE)
+
+#Actually decently linear, try a quadratic just in case
+#compare between LM and PLM and LM with a quadratic
+AIC(r6_lm_int2,r6_plm_reduced_int2,r6_lm_int2_nl)
+#PLM is the best, but non-quadratic is better than quadratic, so will keep the basic LM model (over NL)
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r6_lm_int2, pred=svi_household_disability_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r6_lm_int2, pred=svi_household_disability_user, modx=log_sci_csd, data=reg_shelter,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r6_lm_int2, pred=svi_household_disability_user, modx=log_sci_csd, data=reg_shelter, cond.int = TRUE,
+                  interval = FALSE, robust=TRUE, jnplot = TRUE)
+
+
+##3- SVI Minority User
+###########################
+
+#factor day for fixed effects
+r6_lm_int3 <- lm(log_evac_pc ~ log_sci_csd 
+             + bonding_user + bridging_user + linking_user + 
+             svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +
+           grocery_pharm_user + 
+             residential_user + retail_recreation_user 
+           + employee_muni_user 
+          + dist 
+          + democrat_2016_diff
+          + factor(day)
+          + (svi_minority_user*log_sci_csd), data = reg_shelter)
+
+summary(r6_lm_int3)
+
+#Check linearity
+interact_plot(r6_lm_int3, pred=svi_minority_user , modx=  log_sci_csd, data=reg_shelter, robust=TRUE, linearity.check=TRUE)
+
+#Seems more quadratic, add and test
+#compare between LM and PLM and LM with a quadratic
+AIC(r6_lm_int3,r6_plm_reduced_int3,r6_lm_int3_nl)
+#PLM is the best, but non-quadratic is better than quadratic, so will keep the basic LM model (over NL)
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+johnson_neyman(r6_plm_reduced_int3, pred=svi_minority_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r6_lm_int3, pred=svi_minority_user, modx=log_sci_csd, data=reg_shelter,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r6_lm_int3, pred=svi_minority_user, modx=log_sci_csd, data=reg_shelter, cond.int = TRUE,
+                  interval = FALSE, robust=TRUE, jnplot = TRUE)
+
+
+##4- SVI Housing/Transport
+###########################
+
+#factor day for fixed effects
+r6_lm_int4 <- lm(log_evac_pc ~ log_sci_csd 
+             + bonding_user + bridging_user + linking_user + 
+             svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +
+           grocery_pharm_user + 
+             residential_user + retail_recreation_user 
+           + employee_muni_user 
+          + dist 
+          + democrat_2016_diff
+          + factor(day)
+          + (svi_housing_transport_user*log_sci_csd), data = reg_shelter)
+
+summary(r6_lm_int4)
+
+#Check linearity
+interact_plot(r6_lm_int4, pred=svi_housing_transport_user , modx=  log_sci_csd, data=reg_shelter, robust=TRUE, linearity.check=TRUE)
+
+#Linear-ish, test with quadratic to see
+#compare between LM and PLM and LM with a quadratic
+AIC(r6_lm_int4,r6_plm_reduced_int4,r6_lm_int4_nl)
+#PLM is the best, but non-quadratic is better than quadratic, so will keep the basic LM model (over NL)
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+# CAN do PLM here so check that
+johnson_neyman(r6_plm_reduced_int4, pred=svi_housing_transport_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r6_lm_int4, pred=svi_housing_transport_user, modx=log_sci_csd, data=reg_shelter,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r6_lm_int4, pred=svi_housing_transport_user, modx=log_sci_csd, data=reg_shelter, cond.int = TRUE,
+                  interval = FALSE, robust=TRUE, jnplot = TRUE)
+
+##5- Bonding
+###########################
+
+#factor day for fixed effects
+r6_lm_int5 <- lm(log_evac_pc ~ log_sci_csd 
+             + bonding_user + bridging_user + linking_user + 
+             svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +
+           grocery_pharm_user + 
+             residential_user + retail_recreation_user 
+           + employee_muni_user 
+          + dist 
+          + democrat_2016_diff
+          + factor(day)
+          + (bonding_user *log_sci_csd), data = reg_shelter)
+
+summary(r6_lm_int5)
+
+#Check linearity
+interact_plot(r6_lm_int5, pred=bonding_user , modx=  log_sci_csd, data=reg_shelter, robust=TRUE, linearity.check=TRUE)
+
+#Linear-ish, test with quadratic to see
+#compare between LM and PLM and LM with a quadratic
+AIC(r6_lm_int5,r6_plm_reduced_int5,r6_lm_int5_nl)
+#PLM is the best, but non-quadratic is better than quadratic, so will keep the basic LM model (over NL)
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+# CAN do PLM here so check that
+johnson_neyman(r6_lm_int5, pred=bonding_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r6_lm_int5, pred=bonding_user, modx=log_sci_csd, data=reg_shelter,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r6_lm_int5, pred=bonding_user, modx=log_sci_csd, data=reg_shelter, cond.int = TRUE,
+                  interval = FALSE, robust=TRUE, jnplot = TRUE)
+
+
+interact_plot(r6_lm_int5, pred=bonding_user, modx= log_sci_csd, n.sd= 2, x.label= "Bonding", y.label="Logged Shelter In Place per capira", legend.main = "Log SCI", main.title="Figure 4: Sheltering in Place Interaction- SCI and Bonding", data=reg_shelter)
+
+
+##6- Bridging
+###########################
+
+#factor day for fixed effects
+r6_lm_int6 <- lm(log_evac_pc ~ log_sci_csd 
+             + bonding_user + bridging_user + linking_user + 
+             svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +
+           grocery_pharm_user + 
+             residential_user + retail_recreation_user 
+           + employee_muni_user 
+          + dist 
+          + democrat_2016_diff
+          + factor(day)
+          + (bridging_user *log_sci_csd), data = reg_shelter)
+
+summary(r6_lm_int6)
+
+#Check linearity
+interact_plot(r6_lm_int6, pred=bridging_user , modx=  log_sci_csd, data=reg_shelter, robust=TRUE, linearity.check=TRUE)
+
+#Seems quadratic, test to see
+#compare between LM and PLM and LM with a quadratic
+AIC(r6_lm_int6,r6_plm_reduced_int6,r6_lm_int6_nl)
+#PLM is the best, but non-quadratic is better than quadratic, so will keep the basic LM model (over NL)
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+# CAN do PLM here so check that
+johnson_neyman(r6_lm_int6, pred=bridging_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r6_lm_int6, pred=bridging_user, modx=log_sci_csd, data=reg_shelter,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r6_lm_int6, pred=bridging_user, modx=log_sci_csd, data=reg_shelter, cond.int = TRUE,
+                  interval = FALSE, robust=TRUE, jnplot = TRUE)
+
+
+
+##6- Linking
+###########################
+#factor day for fixed effects
+r6_lm_int7 <- lm(log_evac_pc ~ log_sci_csd 
+             + bonding_user + bridging_user + linking_user + 
+             svi_socioeconomic_user + svi_household_disability_user + svi_minority_user + svi_housing_transport_user +
+           grocery_pharm_user + 
+             residential_user + retail_recreation_user 
+           + employee_muni_user 
+          + dist 
+          + democrat_2016_diff
+          + factor(day)
+          + (linking_user *log_sci_csd), data = reg_shelter)
+
+summary(r6_lm_int7)
+
+#Check linearity
+interact_plot(r6_lm_int7, pred=linking_user , modx=  log_sci_csd, data=reg_shelter, robust=TRUE, linearity.check=TRUE)
+
+#Seems quadratic, test to see
+#compare between LM and PLM and LM with a quadratic
+AIC(r6_lm_int7,r6_plm_reduced_int7,r6_lm_int7_nl)
+#PLM is the best, but non-quadratic is better than quadratic, so will keep the basic LM model (over NL)
+
+#Note in order for this to work need to update weight name + add a variable for the squared variable
+# CAN do PLM here so check that
+johnson_neyman(r6_plm_reduced_int7, pred=linking_user, modx=log_sci_csd, alpha=0.05)
+
+#Calculate slopes
+sim_slopes(r6_lm_int7, pred=linking_user, modx=log_sci_csd, data=reg_shelter,  johnson_neyman = TRUE, jnplot = TRUE, robust = TRUE)
+
+probe_interaction(r6_lm_int7, pred=linking_user, modx=log_sci_csd, data=reg_shelter, cond.int = TRUE,
+                  interval = FALSE, robust=TRUE, jnplot = TRUE)
+
+
+
+
+
+```
+
+
+## MAPS
+
+# 1. Basic Evacuation Map
+```{r}
+## Map Evacuation 
+library(sf)
+library(rgdal)
+library(tidyverse)
+library(sfnetworks)
+library(tidygraph)
+#install.packages("ggspatial")
+
+#Evacuation lines (from Facebook)
+#Basic Map California
+basic_map <- csub_fire %>%
+  ggplot() + geom_sf()
+
+basic_map
+
+# Get Albers Equal Area Conic Projection
+#https://spatialreference.org/ref/esri/north-america-albers-equal-area-conic/
+aea <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=m +no_defs"
+
+
+# Import network
+net <- csub_fire %>%
+  st_transform(crs = aea) %>%
+  filter(evacuation > 0)
+
+# Identify just source and destination communities
+sources <- net %>%
+    mutate(from = as.numeric(from)) %>%
+    as.data.frame() %>%
+    select(geoid = from) %>%
+    distinct() %>%
+    mutate(source = "source")
+
+
+destinations <- net %>%
+    mutate(to = as.numeric(to)) %>%
+    as.data.frame() %>%
+    select(geoid = to) %>%
+    distinct() %>% 
+    mutate(destination = "destination")
+
+
+# Get 5-digit fips codes for affected counties
+mycounties <- read_rds("glass_fire_counties.rds")
+
+# Get county subdivision polygons
+shapes <- read_rds("csub.rds") %>%
+  filter(str_sub(geoid, 1,5) %in% mycounties) %>%
+  st_transform(crs = aea) %>%
+  # also join in the subdivision covariate data
+  #left_join(by = c("geoid" = "csd_user"), y = reg_dat)
+
+# Get centroids
+centroids <- net %>%
+  st_as_sf("nodes") 
+ # left_join(by = c("geoid" = "csub"), y = reg_dat) %>%
+#  filter(!is.na(evacuation_more)) %>%
+#  filter(site_type != "No evacuees")
+
+
+# Get county polygons
+counties <- read_rds("counties.rds") %>%
+  filter(geoid %in% mycounties) %>%
+  st_transform(crs = aea) 
+
+# Get edges
+edges <- net %>%
+  filter(evacuation > 0) %>%
+  st_as_sf("edges")
+
+
+evac_map <- ggplot() +
+  # Set a nice grey outline to map over
+  geom_sf(data = counties, fill = NA, color = "darkgrey", size = 5) +
+  # Map damage proxy at county subdivision level
+  geom_sf(data = shapes,colour= "black" , size = 0.1) +
+  # Show counties
+  # Add white edges to highlight pathways
+  geom_sf(data = edges, color = "red", alpha = 0.15) +
+  # Overlay county boundaries on top
+  geom_sf(data = counties, fill = NA, color = "black", size = 0.5) +
+  # This adds a nice white outline around the points
+  geom_sf(data = centroids, mapping = aes()) +
+  theme_void(base_size = 14) +
+  viridis::scale_fill_viridis(option = "plasma") +
+  scale_color_manual(values = c("#648FFF", "black")) +
+  theme(legend.position = "right",
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.margin = margin(0,0,0,0, unit = "in")) +
+  guides(fill = guide_colorbar(barwidth = 1, barheight = 5)) +
+  labs(size = "Total Evacuees\nper 1,000 residents",
+       subtitle = "Glass Fire\nCentral California") +
+   scale_size_continuous(breaks = c(0, 25, 50, 75, 100)) +
+ ggspatial::annotation_scale(location = "bl", pad_x = unit(0.5, "in")) +
+  ggspatial::annotation_north_arrow(
+    which_north = "true",
+    height = unit(0.25, "in"),
+    width = unit(0.25, "in"),
+    location = "bl") 
+
+
+evac_map
+
+
+
+```
+
+Pending items:
+- Tweak evacuation map:
+  - Add measures for fire intensity (burn rates)
+  - Evacuation order types
+  
+  
+Maps for SCI (show how SCI varies across the evacuation region, how this compares to level of evacuation)
+  
+
+
+
+
+
+# 1. SCI Maps (California)
+
+Note that main affected CSDs are
+
+```{r}
+
+
+# Data files from: https://censusmosaic.demog.berkeley.edu/data/historical-gis-files
+cali_csd_shp <- st_read("cb_2018_06_cousub_500k.shp")
+
+#make GEOID the CSD
+cali_csd_shp$GEOID <- as.numeric(cali_csd_shp$GEOID)
+
+#get list of GEOIDs
+csd_glass <- sci %>%
+  select(csd_user)
+
+#map area of just glass fire
+glass_fire_shp <- csub_fire %>%
+  inner_join(cali_csd_shp, by= c("GEOID" ="from_csub"))
+
+#map area of sci glass fire
+sci_glass <- sci_cali_csd %>%
+  left_join(csd_glass, by= c("csd_user" ="csd_user"))
+
+
+#Basic Map California
+basic_map <- csub_fire %>%
+  ggplot() + geom_sf()
+
+basic_map
+
+
+
+#########################################################
+# 2. Generate heatmaps using the overall 20th percentile #
+##########################################################
+
+# The measures are scaled up from the 20th percentile overall
+x1 <- quantile(sci_cali_csd$sci_csd, .2,na.rm=TRUE)
+x2 <- x1 * 2
+x3 <- x1 * 3
+x5 <- x1 * 5
+x10 <- x1 * 10
+x25 <- x1 * 25
+x100 <- x1 * 100
+
+# Create clean buckets for these levels
+sci_dat_bkts <- sci_glass %>% 
+  mutate(sci_bkt = case_when(
+    sci_csd < x1 ~ "< 1x (Overall 20th percentile)",
+    sci_csd  < x2 ~ "1-2x",
+    sci_csd  < x3 ~ "2-3x",
+    sci_csd  < x5 ~ "3-5x",
+    sci_csd  < x10 ~ "5-10x",
+    sci_csd  < x25 ~ "10-25x",
+    sci_csd  < x100 ~ "25-100x",
+    TRUE ~ ">= 100x")) %>% 
+  mutate(sci_bkt = factor(sci_bkt, levels=c("< 1x (Overall 20th percentile)", "1-2x", "2-3x", "3-5x",
+                                            "5-10x", "10-25x", "25-100x", ">= 100x"))) 
+
+
+#SCI Cali Regions
+sci_regions <-  unique(sci_cali_csd$csd_user)
+
+#drop NAs
+sci_cali_csd <- sci_cali_csd %>%
+  drop_na(csd_fr)
+
+#make mulitple seperate images
+for(i in 1:length(sci_regions)){
+  
+  # Get the data for the ith region
+  dat <- filter(sci_dat_bkts, csd_user == sci_regions[i])
+  
+  # Merge with shape files
+  dat_map <- 
+    inner_join(dat,
+               glass_fire_shp,
+               by=c(csd_fr ="GEOID")) %>% 
+    st_as_sf
+  
+  # Get the region you are in
+  curr_region_outline <- dat_map %>% 
+    filter(csd_fr == sci_regions[i])
+  
+  # Plot the data
+   ggplot(dat_map) +
+    geom_sf(aes(fill = sci_bkt), colour="#ADADAD") +
+    geom_sf(data=curr_region_outline, fill="#A00000", size=0.4) +
+    labs(fill = "SCI") +
+    theme_void() +
+    scale_fill_brewer(palette = "GnBu", drop=FALSE) 
+
+  
+ggsave(paste0("/Maps/sci_cali_", sci_regions[i], ".jpg"),
+         last_plot(), width=12, height=5.5, units="in", dpi=320)
+
+}
+
+
+
+
+```

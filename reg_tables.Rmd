@@ -1,0 +1,436 @@
+---
+title: "reg tables"
+author: "Sarah Neubauer"
+date: "2022-08-08"
+output: html_document
+---
+
+R output to make final regression 
+Note: must run code_regs markdown for this to work (get all the packages in)
+
+#0. Packages/ Setting up the regressions
+```{r setup, include=FALSE}
+
+library(tidyverse) 
+library(dplyr)
+library(dtplyr)
+library(lmtest)
+library(sandwich)
+library(plm)
+
+# GIS packages
+library(sf) # for tidy spatial data
+library(rgdal) # for spatial operations
+library(tigris) # for accessing census boundaries
+library(tidycensus) # for downloading census data
+library(censusapi) # for downloading census data
+library(tidygraph)
+library(ggraph)
+#remotes::install_github("luukvdmeer/sfnetworks")
+library(sfnetworks)
+library(gstat)
+
+# Networks Packages
+library(tidygraph)
+library(ggraph)
+
+#remotes::install_github("luukvdmeer/sfnetworks")
+library(sfnetworks)
+library(gstat)
+
+# Multilevel Modeling
+library(lme4)
+library(lmerTest)
+
+
+library(lfe)
+library(plm)
+library(nlme)
+library(lmtest)
+library(texreg)
+
+# Matching
+library(MatchIt)
+library(cem)
+
+#Regression tables
+install.packages("stargazer")
+library(finalfit)
+library(stargazer)
+
+#set working directory
+setwd("C:/Users/sarah/Desktop/Dissertation/Data/Diss_Code_Final")
+
+
+```
+
+
+
+## OLS Tables 
+These tables are full results for each evacuation type (to possibly put in the appendix??)
+
+```{r}
+
+#Evacuation tables
+stargazer(r1,r3,r5, type = "html", out="evacuation_ols3.html", style = "asq")
+
+
+stargazer(r1,r3,r5, type = "html", out="evacuation_ols.html",) 
+     title = "Evacuation Linear Regressions")
+
+#overall evacuation
+stargazer(r1,r1_2,r1_3,r1_5,r1_6,r1_7,r1_8,r1_9,r1_10, type = "html", out="overall_evac.doc", style="aer",
+          title            = "Table A: Overall Evacuation Linear Regressions",
+          covariate.labels = c("Log(SCI)", "Bonding", "Bridging", "Linking", "SVI-Socioeconomic", "SVI-Houshold Comp. and Disablity", "SVI-Minority and Language", "SVI-Housing amd Transport", "Municiple Employees per 1000", "Difference in Population Density", "Difference in Burn Rate", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters"),
+          dep.var.caption  = " Logged Overall Evacuation per capita")
+
+```
+
+(1) Overall evacuation (increase total mobility = (3) + (5))
+(2) Reduced local (intra_less = decreased movement between neighbourhoods within the same sub-division)
+(3) Local Evacuation (intra_more = increased movement between neighbourhoods within the same sub-division)
+(4) Reduced long-distance (inter_less =  decreased movement between neighbourhoods within the same sub-division) 
+(5) Long-distance Evacuation (inter_more = increased movement between neighbourhoods between DIFFERENT sub-divisions)
+(6) Overall shelter-in-place (reduced total mobility = (2) + (4))
+
+
+## OLS Tables- to put in results section??
+These tables are full results for each evacuation type
+
+```{r}
+
+
+#Overall Movement
+stargazer(r1_10,r6_10, type = "html", out="tables/tab1_overall_tab_ols.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Overall Movement Linear Regressions",
+          covariate.labels = c("Intercept","Log(SCI)", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+          column.labels = c("Overall Evacuation", "Shelter in Place"))
+
+#Local Movement
+stargazer(r3_10,r2_10, type = "html", out="tables/tab2_local_reg_ols.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Table 2: Local Movement Linear Regressions",
+          covariate.labels = c("Intercept","Log(SCI)", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate", "Number of Irrigated Fields","Number of Farms","Difference in 2016 Democratic Voters"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+          column.labels = c("Local Evacuation", " Local Shelter in Place"),
+                            notes = "Local evacuation is within the same county subdivision, so distance is not included as a variable.")
+
+#Long Distance Movement
+stargazer(r5_10,r4_10, type = "html", out="tables/tab3_long-distance_reg_ols.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Table 3: Long Distance Movement Linear Regressions",
+          covariate.labels = c("Intercept","Log(SCI)", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Difference in Daily Burn Rate", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+          column.labels = c("Long Distance Evacuation", " Long Distance Shelter in Place"))
+
+
+```
+
+
+## GLM & PLM
+These tables are full results for each evacuation type
+
+1 Overall Evacuation-GLS is best
+2 Reduced Local-PLM with Robust is best
+3 Local Evac-GLS is best
+4 Long Distance Less-GLS is best 
+5 Long Distance Evac-GLS is best
+6- Shelter in Place-PLM Robust is best
+
+
+```{r}
+
+#Overall Movement
+#get robust se for r6_plm
+summary(r6_plm)
+
+# Adjust standard errors
+stargazer(r1.gls,r6_plm.2, type = "html", out="tables/tab4_overall_gls_plm.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Overall Movement- GLS & Fixed Effect Models",
+          covariate.labels = c("Intercept","Log(SCI)", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+          column.labels = c("Overall Evacuation", "Shelter in Place"),
+          add.lines = list(c("Fixed effects", "No", "Yes"), 
+                           c("Robust SE", "No","Yes")),
+            notes = "Note that fixed effect models (PLM) do not have intercepts.")
+
+#Local Movement
+stargazer(r3.gls,r2_plm.1, type = "html", out="tables/tab5_local_glm_plm.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Table 5: Local Movement- GLS & Fixed Effect Models",
+          covariate.labels = c("Intercept","Log(SCI)", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate", "Number of Irrigated Fields","Number of Farms","Difference in 2016 Democratic Voters"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+                  add.lines = list(c("Fixed effects", "No", "Yes"), 
+                           c("Robust SE", "No","Yes")),
+          column.labels = c("Local Evacuation", " Local Shelter in Place"),
+                            notes = "Local evacuation is within the same county subdivision, so distance is not included as a variable. Fixed effect models (PLM) do not have intercepts")
+
+summary(r2_plm)
+
+#Long Distance Movement
+stargazer(r5.gls,r4.gls, type = "html", out="tables/tab6_long-distance_gls.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Table 6: Long Distance Movement GLS",
+          covariate.labels = c("Intercept","Log(SCI)", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Difference in Daily Burn Rate", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+                           add.lines = list(c("Fixed effects", "No", "No"), 
+                           c("Robust SE", "No","No")),
+          column.labels = c("Long Distance Evacuation", " Long Distance Shelter in Place"))
+
+
+```
+
+## With interactions
+These tables are full results for each evacuation type
+
+1 Overall Evacuation-GLS is best
+2 Reduced Local-PLM with Robust is best
+3 Local Evac-GLS is best
+4 Long Distance Less-GLS is best 
+5 Long Distance Evac-GLS is best
+6- Shelter in Place-PLM Robust is best
+
+
+NEW INTERACTION TABLES _ divide into evacuation and SIP, bonding and bridging
+(1) Evacuation
+(2) Shelter in place
+
+```{r}
+#Overall Evac
+#Bonding
+oeb1 <- r1.gls_int5_nl
+#Bridging
+oeb2 <- r1.gls_int6_nl
+
+#Local
+#Bonding
+leb1 <- r3.gls_int5_nl
+#Bridging
+leb2 <- r3.gls_int6_nl
+
+#Long Distance
+#Bonding
+ldeb1 <- r5_gls_int5_nl
+
+#Bridging
+ldeb2 <- r5_lm_int6_nl
+
+#Evacuation
+stargazer(oeb1,oeb2, leb1, leb2, ldeb1, ldeb2, type = "html", out="tables/tab7_evac_int.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          covariate.labels = c("Intercept","Log(SCI)","Log(SCI) Sqr", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate Difference", "Daily Burn Rate Orgin", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters", "Origin 2016 Democratic Voters", "Log(SCI) X Bonding","Log(SCI) X Bridging"),
+          title = "Interactions for Overall Evacuation",
+          column.labels   = c("Overall Evacuation SCI X Bonding Int", "Overall Evacuation SCI X Bridging", "Local Evacuation SCI X Bonding", "Local Evacuation SCI X Bridging", "Long Distance Evacuation SCI X Bonding", "Long Distance Evacuation SCI X Bridging"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+          add.lines = list(c("Other Controls", "Yes","Yes", "Yes", "Yes", "Yes", "Yes"),
+            c("Fixed effects","No", "No","No", "No","No", "No" ), 
+                           c("Robust SE", "No","No","No", "No","No", "No")),
+          notes = "Local is within the same county sub-division, so difference between areas and distance are not included. All regressions are estimated with GLS")
+
+
+summary(r5_gls_int6_nl)
+
+```
+
+
+```{r}
+
+#Overall Evacuation
+stargazer(r1.gls_int5_nl,r1.gls_int6_nl,type = "html", out="tables/tab7_overall_evac.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          covariate.labels = c("Intercept","Log(SCI)","Log(SCI) Sqr", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate Difference", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters", "Log(SCI) X Bonding","Log(SCI) X Bridging"),
+          title = "Interactions for Overall Evacuation",
+          column.labels   = c("Overall Evacuation"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+          add.lines = list(c("Other Controls", "Yes","Yes"),
+            c("Fixed effects","No", "No"), 
+                           c("Robust SE", "No","No")))
+
+#Local Evacuation
+stargazer(r3.gls_int2,r3.gls_int5, type = "html", out="tables/tab8_local_evac.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Table 8: Local Evacuation Interactions",
+          covariate.labels = c("Intercept","Log(SCI)", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate", "Number of Irrigated Fields","Number of Farms","Difference in 2016 Democratic Voters", "Log(SCI) X SVI (Household Comp and Disability)","Log(SCI) X Bonding"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+                  add.lines = list(c("Other Controls", "Yes","Yes"),
+                    c("Fixed effects", "No", "Yes"), 
+                           c("Robust SE", "No","Yes")),
+          column.labels = c("SCI X SVI(Houshold Comp and Disablity) Interaction", " SCI X Bonding"))
+
+
+#Long Distance Shelter in Place
+
+stargazer(r4.gls_int1_nl,r4.gls_int3_nl,r4.gls_int4_nl,r4.gls_int5_nl, type = "html", out="tables/tab9_long_dist.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Table 9: Long Distance Shelter in Place Interactions",
+          covariate.labels = c("Intercept","Log(SCI)", "Log(SCI) Squared","Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate", "Number of Irrigated Fields","Number of Farms","Distance", "Difference in 2016 Democratic Voters", "Log(SCI) X SVI(Socioeconomic)","Log(SCI) X SVI(Minority and Language)","Log(SCI) X SVI(Housing and Transport)","Log(SCI) X Bonding"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+                  add.lines = list(c("Other Controls", "Yes","Yes", "Yes", "Yes"),
+                    c("Fixed effects", "No", "No", "No","No"), 
+                           c("Robust SE", "No","No", "No","No")),
+          column.labels = c("SCI X SVI (Socioeconomic)","SCI X SVI(Minority and Language)","SCI X SVI(Housing and Transport)", " SCI X Bonding"),
+          notes = "All models here include a quadratic of Log(SCI) as this was deemed to be the best fit with included interactions.")
+
+
+#Long Distance Evacuation
+stargazer(r5_gls_int1_nl, r5_gls_int4_nl, r5_gls_int5_nl, type = "html", out="tables/tab10_long_dist_evac.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Table 10: Long Distance Evacuation Interactions",
+          covariate.labels = c("Intercept","Log(SCI)","Log(SCI) Squared", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Difference in Daily Burn Rate", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters", "Log(SCI) X SVI(Socioeconomic)","Log(SCI) X SVI(Houshold and Transport)","Log(SCI) X Bonding"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+                           add.lines = list(c("Other Controls", "Yes","Yes", "Yes"),
+                                            c("Fixed effects","No", "No","No"), 
+                           c("Robust SE", "No","No","No")),
+          column.labels = c("SCI X SVI(Socioeconomic)","SCI X SVI(Housing and Transport)", "SCI X Bonding"),
+          notes = "Models may include a quadratic of log(SCI) as this was deemed to be the best fit")
+
+
+#Shelter in Place
+stargazer(r6_plm_int2.2, r6_plm_int5.2, r6_plm_int6.2, type = "html", out="tables/tab11_shelter.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          title = "Table 11: Shelter in Place Interactions",
+          covariate.labels = c("Log(SCI)", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Difference in Daily Burn Rate", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters", "Log(SCI) X SVI(Houshold Comp and Disablity)","Log(SCI) X Bonding)","Log(SCI) X Bridging"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+                           add.lines = list(c("Other Controls", "Yes","Yes", "Yes"),
+                                            c("Fixed effects","Yes", "Yes","Yes"), 
+                           c("Robust SE", "Yes","Yes","Yes")),
+          column.labels = c("SCI X SVI(Houshold Comp and Disability)","SCI X Bonding", "SCI X Bridging"))
+
+r6_plm_int6.2
+
+```
+
+
+#important analysis 
+maybe he wants to fuck and is trying to make conversation 
+obvs was my first assumption, but its not v smooth??!?!?!??!
+hes assuming shes dumb
+he asked the bumbest Q of alll tho
+
+## With interactions
+These tables are full results for each evacuation type
+
+1 Overall Evacuation-GLS is best
+2 Reduced Local-PLM with Robust is best
+3 Local Evac-GLS is best
+4 Long Distance Less-GLS is best 
+5 Long Distance Evac-GLS is best
+6- Shelter in Place-PLM Robust is best
+
+
+NEW INTERACTION TABLES _ divide into evacuation and SIP, bonding and bridging
+(1) Evacuation
+(2) Shelter in place
+
+```{r}
+
+#Evacuation
+#Overall Evacuation
+#Bonding
+oeb1 <- r1.gls_int5_nl
+#Bridging
+oeb2 <- r1.gls_int6_nl
+
+#Local
+#Bonding
+leb1 <- r3.gls_int5_nl
+#Bridging
+leb2 <- r3.gls_int6_nl
+
+#Long Distance
+#Bonding
+ldeb1 <- r5_gls_int5_nl
+
+#Bridging
+ldeb2 <- r5_lm_int6_nl
+
+#Evacuation
+stargazer(oeb1,oeb2, leb1, leb2, ldeb1, ldeb2, type = "html", out="tables/tab7_evac_int.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          covariate.labels = c("Intercept","Log(SCI)","Log(SCI) Sqr", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate Difference", "Daily Burn Rate Orgin", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters", "Origin 2016 Democratic Voters", "Log(SCI) X Bonding","Log(SCI) X Bridging"),
+          title = "Interactions for Overall Evacuation",
+          column.labels   = c("Overall Evacuation SCI X Bonding Int", "Overall Evacuation SCI X Bridging", "Local Evacuation SCI X Bonding", "Local Evacuation SCI X Bridging", "Long Distance Evacuation SCI X Bonding", "Long Distance Evacuation SCI X Bridging"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+          add.lines = list(c("Other Controls", "Yes","Yes", "Yes", "Yes", "Yes", "Yes"),
+            c("Fixed effects","No", "No","No", "No","No", "No" ), 
+                           c("Robust SE", "No","No","No", "No","No", "No")),
+          notes = "Local is within the same county sub-division, so difference between areas and distance are not included. All regressions are estimated with GLS")
+
+```
+
+```{r}
+
+#Shelter in Place
+#Bonding
+sipb <- r6_lm_int5_nl
+summary(sipb)
+
+#Bridging
+sipbr <- r6_lm_int6_nl
+
+#Local Reduced
+#Bonding
+lspb <- r2_plm.1_int5
+
+summary(r2_plm_int5)
+lspb
+
+#Bridging
+lspbr <- r2_plm.1_int6
+
+summary(r2_plm_int6)
+
+#Long Distance
+#Bonding
+ldsipb <- r4.gls_int5_nl
+
+#Bridging
+ldsipbr <- r4.gls_int6
+
+#Evacuation
+stargazer(sipb, sipbr, lspb, lspbr, ldsipb, ldsipbr, type = "html", out="tables/tab8_sip_int.doc", style="apsr",
+          intercept.bottom = FALSE,
+          single.row = TRUE,
+          initial.zero = FALSE, 
+          covariate.labels = c("Intercept","Log(SCI)","Log(SCI) Sqr", "Bonding", "Bridging", "Linking", "SVI(Socioeconomic)", "SVI(Houshold Comp and Disablity)", "SVI(Minority and Language)", "SVI(Housing and Transport)", "Municipal Employees per 1000", "Daily Burn Rate Difference", "Daily Burn Rate Orgin", "Number of Irrigated Fields","Number of Farms", "Distance","Difference in 2016 Democratic Voters", "Origin 2016 Democratic Voters","Day", "Log(SCI) X Bonding","Log(SCI) X Bridging"),
+          title = "Interactions for Overall Sheltering in Place",
+          column.labels   = c("OS  SCI X Bonding Int", "OS SCI X Bridging", "Local Shelter SCI X Bonding", "Local Shelter SCI X Bridging", "Long Distance Sheleter SCI X Bonding", "Long Distance Shelter SCI X Bridging"),
+          dep.var.caption  = "Logged Overall Evacuation per capita",
+          add.lines = list(c("Other Controls", "Yes","Yes", "Yes", "Yes", "Yes", "Yes"),
+            c("Fixed effects","Yes", "Yes","Yes", "Yes","Yes", "Yes" ), 
+                           c("Robust SE", "No","Yes","Yes", "No","Yes", "Yes")),
+          notes = "Local is within the same county sub-division, so difference between areas and distance are not included. Regressions are estimated with both GLS and linear panel estimations")
+
+
+
+
+```
